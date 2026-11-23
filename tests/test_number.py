@@ -193,7 +193,7 @@ async def test_openwb_number_init(hass: HomeAssistant) -> None:
         number.unique_id == "test_unique_id_max_current"
     )  # slugify converts spaces to underscores
     assert number.device_info["name"] == "Test Device"
-    assert number.device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
+    assert number.device_info["identifiers"] == {(DOMAIN, "openWB-Test Device")}
     assert number.native_min_value == 6
     assert number.native_max_value == 32
     assert number.native_step == 1

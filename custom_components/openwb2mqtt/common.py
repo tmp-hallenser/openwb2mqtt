@@ -10,7 +10,8 @@ from typing import Any, TypeVar
 from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -20,6 +21,40 @@ _LOGGER = logging.getLogger(__name__)
 
 # Type variable for entity classes
 T = TypeVar("T", bound=Entity)
+
+
+def device_identifier(mqtt_root: str, device_friendly_name: str) -> tuple[str, str]:
+    """Return the device registry identifier of an MQTT device."""
+    return (DOMAIN, f"{mqtt_root}-{device_friendly_name}")
+
+
+@callback
+def async_migrate_device_identifiers(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Convert (domain, name, mqtt_root) identifiers to device_identifier().
+
+    Device registry identifiers are (domain, id) pairs. Earlier versions used a
+    three-element tuple. Updating the existing devices keeps their IDs, names
+    set by the user, areas and the entities attached to them.
+    """
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        if not any(
+            ident[0] == DOMAIN and len(ident) == 3 for ident in device.identifiers
+        ):
+            continue
+        new_identifiers = {
+            device_identifier(ident[2], ident[1])
+            if ident[0] == DOMAIN and len(ident) == 3
+            else ident
+            for ident in device.identifiers
+        }
+        _LOGGER.debug(
+            "Migrating device %s identifiers %s -> %s",
+            device.id,
+            device.identifiers,
+            new_identifiers,
+        )
+        device_registry.async_update_device(device.id, new_identifiers=new_identifiers)
 
 
 class OpenWBBaseEntity:
@@ -41,7 +76,7 @@ class OpenWBBaseEntity:
         """Return the device information."""
         return DeviceInfo(
             name=self.device_friendly_name,
-            identifiers={(DOMAIN, self.device_friendly_name, self.mqtt_root)},
+            identifiers={device_identifier(self.mqtt_root, self.device_friendly_name)},
             manufacturer=MANUFACTURER,
             model=MODEL,
         )

@@ -50,7 +50,7 @@ def test_openwb_base_entity() -> None:
     device_info = entity.device_info
     # DeviceInfo is a TypedDict, so we can't use isinstance
     assert device_info["name"] == "Test Device"
-    assert device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
+    assert device_info["identifiers"] == {(DOMAIN, "openWB-Test Device")}
     assert device_info["manufacturer"] == MANUFACTURER
     assert device_info["model"] == MODEL
 

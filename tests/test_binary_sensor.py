@@ -141,7 +141,7 @@ async def test_openwb_binary_sensor_init(hass: HomeAssistant) -> None:
         sensor.unique_id == "test_unique_id_plug_state"
     )  # Using slugify which converts hyphens to underscores
     assert sensor.device_info["name"] == "Test Device"
-    assert sensor.device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
+    assert sensor.device_info["identifiers"] == {(DOMAIN, "openWB-Test Device")}
 
 
 @pytest.mark.parametrize(

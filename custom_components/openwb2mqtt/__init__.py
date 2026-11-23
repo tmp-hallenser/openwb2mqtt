@@ -9,6 +9,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import OpenWB2MqttApiClient
 from .charge_template import ChargeTemplateManager
+from .common import async_migrate_device_identifiers
 
 # Import global values.
 from .const import (
@@ -50,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenWBConfigEntry) -> bo
         # MQTT is an after_dependency so that HTTP users do not need it.
         if not await mqtt.async_wait_for_mqtt_client(hass):
             raise ConfigEntryNotReady("MQTT integration is not available")
+        async_migrate_device_identifiers(hass, entry)
         if entry.data.get(DEVICETYPE) == "chargepoint":
             # Charge mode, limits and currents are read from and written to
             # the chargepoint's active charge template.

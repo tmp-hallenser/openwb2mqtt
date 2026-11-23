@@ -222,7 +222,7 @@ async def test_openwb_sensor_init(hass: HomeAssistant) -> None:
     assert sensor.name == "Power"
     assert sensor.unique_id == "test_unique_id_power"
     assert sensor.device_info["name"] == "Test Device"
-    assert sensor.device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
+    assert sensor.device_info["identifiers"] == {(DOMAIN, "openWB-Test Device")}
 
 
 @pytest.mark.parametrize(
