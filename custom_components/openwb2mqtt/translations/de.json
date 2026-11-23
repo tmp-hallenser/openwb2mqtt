@@ -7,6 +7,7 @@
     },
     "config": {
         "abort": {
+            "mqtt_not_configured": "Richten Sie zuerst die MQTT-Integration in Home Assistant ein oder wählen Sie die HTTP-API.",
             "already_configured": "Diese Integration ist schon konfiguriert. Geben Sie ein anderes MQTT-Wurzeltopic/Präfix ein, wählen Sie einen anderen Gerätetyp aus oder geben Sie eine andere Geräte-ID ein.",
             "controller_already_configured": "Diese Wallbox wurde schon konfiguriert. Geben Sie ein anderes MQTT-Wurzeltopic/Präfix ein.",
             "batterie_already_configured": "Diese Batterie wurde schon konfiguriert. Geben Sie ein anderes MQTT-Wurzeltopic/Präfix oder eine andere Geräte-ID ein.",

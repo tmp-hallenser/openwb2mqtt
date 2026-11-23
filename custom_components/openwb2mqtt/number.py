@@ -46,7 +46,7 @@ async def async_setup_entry(
     entities_to_add = []
 
     if config.data.get(COMMUNICATION_METHOD) == COMM_METHOD_HTTP:
-        coordinator = hass.data[DOMAIN][config.entry_id]
+        coordinator = config.runtime_data.coordinator
         if device_type == "chargepoint":
             for description in NUMBERS_PER_CHARGEPOINT:
                 if description.api_key is None:
@@ -86,7 +86,7 @@ async def async_setup_entry(
                 process_chargepoint_numbers,
             )
 
-            manager: ChargeTemplateManager = hass.data[DOMAIN][config.entry_id]
+            manager = config.runtime_data.charge_template
             async_add_entities(
                 openwbChargeTemplateNumber(
                     config_entry=config,

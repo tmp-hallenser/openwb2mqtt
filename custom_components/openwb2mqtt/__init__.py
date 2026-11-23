@@ -2,8 +2,9 @@
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components import mqtt
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import OpenWB2MqttApiClient
@@ -17,19 +18,18 @@ from .const import (
     COMMUNICATION_METHOD,
     DEVICEID,
     DEVICETYPE,
-    DOMAIN,
     MQTT_ROOT_TOPIC,
     PLATFORMS,
 )
 from .coordinator import OpenWB2MqttDataUpdateCoordinator
+from .data import OpenWBConfigEntry, OpenWBRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: OpenWBConfigEntry) -> bool:
     """Set up the openWB2 MQTT integration from a config entry."""
-    if DOMAIN not in hass.data:
-        hass.data[DOMAIN] = {}
+    runtime_data = OpenWBRuntimeData()
 
     if entry.data.get(COMMUNICATION_METHOD) == COMM_METHOD_HTTP:
         api_client = OpenWB2MqttApiClient(
@@ -45,35 +45,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             config_entry=entry,
         )
         await coordinator.async_config_entry_first_refresh()
-        hass.data[DOMAIN][entry.entry_id] = coordinator
-    elif entry.data.get(DEVICETYPE) == "chargepoint":
-        # Charge mode, limits and currents are read from and written to the
-        # chargepoint's active charge template.
-        manager = ChargeTemplateManager(
-            hass, entry.data[MQTT_ROOT_TOPIC], entry.data[DEVICEID]
-        )
-        entry.async_on_unload(await manager.async_start())
-        entry.async_on_unload(
-            manager.async_report_missing_template(
-                f"missing_charge_template_{entry.entry_id}", entry.title
+        runtime_data.coordinator = coordinator
+    else:
+        # MQTT is an after_dependency so that HTTP users do not need it.
+        if not await mqtt.async_wait_for_mqtt_client(hass):
+            raise ConfigEntryNotReady("MQTT integration is not available")
+        if entry.data.get(DEVICETYPE) == "chargepoint":
+            # Charge mode, limits and currents are read from and written to
+            # the chargepoint's active charge template.
+            manager = ChargeTemplateManager(
+                hass, entry.data[MQTT_ROOT_TOPIC], entry.data[DEVICEID]
             )
-        )
-        hass.data[DOMAIN][entry.entry_id] = manager
+            entry.async_on_unload(await manager.async_start())
+            entry.async_on_unload(
+                manager.async_report_missing_template(
+                    f"missing_charge_template_{entry.entry_id}", entry.title
+                )
+            )
+            runtime_data.charge_template = manager
 
+    entry.runtime_data = runtime_data
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: OpenWBConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-
-    return unload_ok
-
-
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    # This is all that's needed. Home Assistant handles the reload.
-    await hass.config_entries.async_reload(entry.entry_id)
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

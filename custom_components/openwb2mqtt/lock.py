@@ -41,7 +41,7 @@ async def async_setup_entry(
     descriptions_copy = copy.deepcopy(LOCKS_PER_CHARGEPOINT)
 
     if communication_method == COMM_METHOD_HTTP:
-        coordinator = hass.data[DOMAIN][config.entry_id]
+        coordinator = config.runtime_data.coordinator
         if device_type == "chargepoint":
             for description in descriptions_copy:
                 if description.api_key is None:
