@@ -5,7 +5,6 @@ This file explains the MQTT topic patterns used by the openWB integration. Use t
 ### Placeholders
 *   `{mqttRoot}`: The root topic configured in your integration (e.g., `openWB`).
 *   `{deviceID}`: The numeric ID of the device you are configuring.
-*   `{charge_template_id}`: The ID of the active charge template for the connected vehicle.
 *   `{vehicleID}`: The ID of the connected vehicle.
 
 ---
@@ -58,41 +57,52 @@ This file explains the MQTT topic patterns used by the openWB integration. Use t
     *   `charge_state`
     *   `fault_state`
 
+### Charge template (selects, numbers and three sensors)
+Charge mode, limits, currents, phases and the max. price are values of the
+chargepoint's active charge template. openWB only accepts changes to it as the
+complete JSON document, so the integration reads the template, changes one
+value and publishes the whole template.
+
+*   **IN**: `{mqttRoot}/chargepoint/{deviceID}/set/charge_template`
+*   **OUT**: `{mqttRoot}/set/chargepoint/{deviceID}/set/charge_template`
+
+| Entity | `key` | Value in the template |
+|---|---|---|
+| select | `chargemode` | `chargemode.selected` |
+| select | `instant_charging_limitation` | `chargemode.instant_charging.limit.selected` |
+| select | `instant_charging_phases` | `chargemode.instant_charging.phases_to_use` |
+| select | `pv_charging_phases` | `chargemode.pv_charging.phases_to_use` |
+| select | `pv_charging_limitation` | `chargemode.pv_charging.limit.selected` |
+| select | `eco_charging_limitation` | `chargemode.eco_charging.limit.selected` |
+| number | `instant_charging_current_control` | `chargemode.instant_charging.current` |
+| number | `instant_charging_energy_limit_control` | `chargemode.instant_charging.limit.amount` (Wh) |
+| number | `instant_charging_soc_limit_control` | `chargemode.instant_charging.limit.soc` |
+| number | `pv_charging_min_current_control` | `chargemode.pv_charging.min_current` |
+| number | `pv_charging_min_soc_control` | `chargemode.pv_charging.min_soc` |
+| number | `pv_charging_soc_limit_control` | `chargemode.pv_charging.limit.soc` |
+| number | `pv_charging_energy_limit_control` | `chargemode.pv_charging.limit.amount` (Wh) |
+| number | `eco_charging_soc_limit_control` | `chargemode.eco_charging.limit.soc` |
+| number | `eco_charging_energy_limit_control` | `chargemode.eco_charging.limit.amount` (Wh) |
+| number | `price_based_charging_max_price` | `chargemode.eco_charging.max_price` (EUR/Wh) |
+| sensor | `instant_charging_current` | `chargemode.instant_charging.current` |
+| sensor | `pv_charging_min_current` | `chargemode.pv_charging.min_current` |
+| sensor | `price_based_charging_max_price` | `chargemode.eco_charging.max_price` (EUR/Wh) |
+
 ### LOCKS_PER_CHARGEPOINT
 *   **`key`**: `manual_lock`
-    *   **IN (Value Topic)**: `{mqttRoot}/chargepoint/{deviceID}/set/manual_lock`
-    *   **OUT (Command Topic)**: `{mqttRoot}/set/chargepoint/{deviceID}/set/manual_lock`
+    *   **IN**: `{mqttRoot}/chargepoint/{deviceID}/set/manual_lock`
+    *   **OUT**: `{mqttRoot}/set/chargepoint/{deviceID}/set/manual_lock`
 
-### SELECTS_PER_CHARGEPOINT
-*   **`key`**: `instant_charging_limitation`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected`
-*   **`key`**: `chargemode`
-    *   **IN (Value Topic)**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/config` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/selected`
+### Connected vehicle (select)
 *   **`key`**: `connected_vehicle`
-    *   **IN (Value Topic)**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/info` (extracts from JSON)
-    *   **OUT (Command Topic)**: `{mqttRoot}/set/chargepoint/{deviceID}/config/ev`
+    *   **IN**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/info` (JSON `id`), vehicle names from `{mqttRoot}/vehicle/{vehicleID}/name`
+    *   **OUT**: `{mqttRoot}/set/chargepoint/{deviceID}/config/ev`
 
-### NUMBERS_PER_CHARGEPOINT
+### Manual SoC (number)
 *   **`key`**: `manual_soc`
-    *   **IN (Value Topic)**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/soc` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/{vehicleID}/soc_module/calculated_soc_state/manual_soc`
-*   **`key`**: `instant_charging_current_control`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/current`
-*   **`key`**: `pv_charging_min_current_control`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/pv_charging/min_current`
-*   **`key`**: `instant_charging_energy_limit_control`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/amount`
-*   **`key`**: `instant_charging_soc_limit_control`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/soc`
-*   **`key`**: `price_based_charging_max_price`
-    *   **IN (Value Topic Template)**: `{mqttRoot}/vehicle/template/charge_template/{charge_template_id}` (extracts from JSON)
-    *   **OUT (Command Topic Template)**: `{mqttRoot}/set/vehicle/template/charge_template/{charge_template_id}/et/max_price`
+    *   **IN**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/soc` (JSON `soc`)
+    *   **IN**: `{mqttRoot}/chargepoint/{deviceID}/get/connected_vehicle/info` (JSON `id`, the vehicle to address)
+    *   **OUT**: `{mqttRoot}/set/vehicle/{vehicleID}/soc_module/calculated_soc_state/manual_soc`
 
 ---
 
