@@ -120,6 +120,55 @@ service is not needed for MQTT.
     *   *How to find the Device ID:*
         ![openWB Status Page with Device IDs](https://github.com/a529987659852/openwb2mqtt/blob/main/openWBStatusTab-IDs.png)
 
+#### Zielladen (target charging)
+
+With MQTT, the first target charging plan of a chargepoint is available as
+entities, so you can set a departure time and a target SoC from Home
+Assistant. openWB charges with PV surplus first and switches to grid
+charging in time to reach the target SoC by the departure.
+
+**Prerequisites**
+*   One target charging plan exists for the vehicle in openWB (Ladeprofil >
+    Zielladen). The integration edits this plan but cannot create or delete
+    plans. Without a plan, the entities are unavailable.
+*   A SoC module for the vehicle, if you use a target SoC.
+*   The MQTT bridge rules for the charge template (see above). No other
+    topics are needed.
+
+**Entities** (chargepoint device)
+
+| Entity | Plan value |
+|---|---|
+| `datetime.<...>_abfahrt_zielladen` | Departure. Setting it makes the plan a one-time plan for that date and time. For daily/weekly plans it shows the next occurrence. |
+| `number.<...>_ziel_soc_zielladen` | SoC to reach by the departure. Also sets the plan's limit to "SoC". |
+| `number.<...>_soc_limit_zielladen` | Maximum SoC when charging with surplus (before and after the target). Keep it at or above the target SoC. |
+| `switch.<...>_plan_aktiv_zielladen` | Plan active. |
+| `select.<...>_begrenzung_zielladen` | Limit by SoC or energy. |
+| `number.<...>_energiemenge_zielladen` * | Energy to charge (kWh). Also sets the limit to "Energiemenge". |
+| `number.<...>_ladestrom_zielladen` * | Current for grid charging. |
+| `select.<...>_phasen_zielladen` * | Phases for grid charging. |
+| `select.<...>_phasen_pv_zielladen` * | Phases while charging with surplus. |
+| `select.<...>_wiederholung_zielladen` * | Once / daily / weekly. |
+
+\* disabled by default; enable them in the entity settings if you need them.
+
+**Usage**
+1.  Set the departure and the target SoC (optionally the SoC limit).
+2.  Turn on "Plan aktiv (Zielladen)".
+3.  Set the charge mode select to **Target Charging**. The plan switch does
+    not change the charge mode.
+
+openWB's status text, e.g. "Zielladen startet um 05:40 Uhr. Falls vorhanden,
+wird mit Überschuss geladen.", appears in the chargepoint's "Ladezustand"
+sensor (`sensor.<...>_ladezustand`).
+
+**Limitations**
+*   Only the first plan of the charge template is controlled. With several
+    active plans, openWB uses the one with the nearest departure, which is
+    not necessarily the first.
+*   openWB uses the wallbox's local time; Home Assistant's time zone must be
+    the same.
+
 ---
 
 ## 4. Migrating from MQTT to API

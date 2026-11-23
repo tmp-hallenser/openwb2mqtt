@@ -84,6 +84,16 @@ value and publishes the whole template.
 | number | `eco_charging_soc_limit_control` | `chargemode.eco_charging.limit.soc` |
 | number | `eco_charging_energy_limit_control` | `chargemode.eco_charging.limit.amount` (Wh) |
 | number | `price_based_charging_max_price` | `chargemode.eco_charging.max_price` (EUR/Wh) |
+| datetime | `scheduled_plan_departure` | `chargemode.scheduled_charging.plans[0]`: `time`, `frequency.selected`, `frequency.once` |
+| switch | `scheduled_plan_active` | `chargemode.scheduled_charging.plans[0].active` |
+| select | `scheduled_plan_limit` | `chargemode.scheduled_charging.plans[0].limit.selected` |
+| select | `scheduled_plan_phases` | `chargemode.scheduled_charging.plans[0].phases_to_use` |
+| select | `scheduled_plan_phases_pv` | `chargemode.scheduled_charging.plans[0].phases_to_use_pv` |
+| select | `scheduled_plan_frequency` | `chargemode.scheduled_charging.plans[0].frequency.selected` |
+| number | `scheduled_plan_soc_target` | `chargemode.scheduled_charging.plans[0].limit.soc_scheduled` (also sets `limit.selected` = `soc`) |
+| number | `scheduled_plan_soc_limit` | `chargemode.scheduled_charging.plans[0].limit.soc_limit` |
+| number | `scheduled_plan_energy` | `chargemode.scheduled_charging.plans[0].limit.amount` (Wh; also sets `limit.selected` = `amount`) |
+| number | `scheduled_plan_current` | `chargemode.scheduled_charging.plans[0].current` |
 | sensor | `instant_charging_current` | `chargemode.instant_charging.current` |
 | sensor | `pv_charging_min_current` | `chargemode.pv_charging.min_current` |
 | sensor | `price_based_charging_max_price` | `chargemode.eco_charging.max_price` (EUR/Wh) |
