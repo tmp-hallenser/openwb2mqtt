@@ -5,15 +5,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from homeassistant.components.mqtt.models import ReceiveMessage
-from homeassistant.components.mqtt.sensor import MQTT_SENSOR_ATTRIBUTES_BLOCKED
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 import homeassistant.components.mqtt as mqtt
 
-from tests.common import MockConfigEntry, async_fire_mqtt_message
-from tests.components.mqtt.test_sensor import (
-    help_test_setting_attribute_via_mqtt_json_message,
-)
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Enable loading custom integrations in all tests."""
+    return
 
 
 @pytest.fixture
@@ -248,60 +250,3 @@ def mock_openwb_number_device():
         "max": 100,
         "step": 1,
     }
-
-
-async def help_test_setup_manual_entity_from_yaml(
-    hass, mqtt_mock_entry, config, platform
-):
-    """Test setup manual configured MQTT entity.
-
-    This helper function tests that a manually configured MQTT entity
-    (from YAML configuration) is properly set up in Home Assistant.
-
-    It verifies that the entity state is created in Home Assistant,
-    which confirms that the entity was properly initialized and registered.
-    """
-    assert hass.states.get(f"{platform}.test")
-
-
-async def help_test_entity_device_info_with_identifier(
-    hass, mqtt_mock_entry, platform, config
-):
-    """Test device registry integration.
-
-    This helper function tests that an MQTT entity correctly registers
-    its device information in the Home Assistant device registry.
-
-    It verifies that:
-    1. The device is created in the registry with the correct identifier
-    2. The device has the correct manufacturer, model, and name
-
-    This ensures proper device representation in the Home Assistant UI.
-    """
-    entry = MockConfigEntry(domain=mqtt.DOMAIN)
-    entry.add_to_hass(hass)
-
-    device_registry = hass.helpers.device_registry.async_get(hass)
-
-    data = {
-        "platform": platform,
-        "name": "test",
-        "state_topic": "test-topic",
-        "device": {
-            "identifiers": ["helloworld"],
-            "manufacturer": "Test",
-            "model": "Test",
-            "name": "Test",
-        },
-        "unique_id": "veryunique",
-    }
-
-    async_fire_mqtt_message(hass, f"homeassistant/{platform}/bla/config", data)
-    await hass.async_block_till_done()
-
-    device = device_registry.async_get_device(identifiers={("mqtt", "helloworld")})
-    assert device is not None
-    assert device.identifiers == {("mqtt", "helloworld")}
-    assert device.manufacturer == "Test"
-    assert device.model == "Test"
-    assert device.name == "Test"

@@ -172,3 +172,13 @@ This integration can create the following device types in Home Assistant:
 
 *   **How do I find the MQTT topics for a specific entity?**
     *   For advanced debugging with MQTT, you can map topics to entities. Check the `MQTT_Topic_Reference.md` file in this repository. For a given entry, like `SENSORS_PER_CHARGEPOINT` with `key="get/power"`, the topic will be `{mqttRoot}/chargepoint/{deviceID}/get/power`. You can then find the corresponding entity by looking for the same `key` in the `const.py` file.
+
+## 7. Development
+
+The tests use [pytest-homeassistant-custom-component](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component), which pins a matching Home Assistant version. Python 3.14 is required.
+
+```bash
+uv venv --python 3.14 .venv
+uv pip install --python .venv -r requirements_test.txt
+.venv/bin/pytest
+```

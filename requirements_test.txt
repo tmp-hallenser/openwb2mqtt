@@ -1,0 +1,2 @@
+# Pin to the newest harness release; it pins the matching homeassistant version.
+pytest-homeassistant-custom-component==0.13.375

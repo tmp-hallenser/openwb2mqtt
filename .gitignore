@@ -4,3 +4,8 @@
 .DS_Store
 *.xlsx
 custom_components/openwb2mqtt/api_spec.txt
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage

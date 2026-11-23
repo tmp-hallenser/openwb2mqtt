@@ -23,14 +23,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
 
-from config.custom_components.openwb2mqtt.const import (
+from custom_components.openwb2mqtt.const import (
     DOMAIN,
     BINARY_SENSORS_PER_CHARGEPOINT,
     openwbBinarySensorEntityDescription,
 )
-from config.custom_components.openwb2mqtt.binary_sensor import openwbBinarySensor
+from custom_components.openwb2mqtt.binary_sensor import openwbBinarySensor
 
-from tests.common import MockConfigEntry, async_fire_mqtt_message
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
 
 
 async def test_binary_sensor_setup(hass: HomeAssistant, mock_mqtt_subscribe) -> None:

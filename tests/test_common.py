@@ -7,7 +7,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 
-from config.custom_components.openwb2mqtt.common import (
+from custom_components.openwb2mqtt.common import (
     OpenWBBaseEntity,
     async_setup_binary_sensors,
     async_setup_entities,
@@ -15,7 +15,7 @@ from config.custom_components.openwb2mqtt.common import (
     async_setup_selects,
     async_setup_sensors,
 )
-from config.custom_components.openwb2mqtt.const import (
+from custom_components.openwb2mqtt.const import (
     DEVICEID,
     DEVICETYPE,
     DOMAIN,
@@ -95,7 +95,7 @@ async def test_async_setup_entities(hass: HomeAssistant) -> None:
 
     # Mock the copy.deepcopy function to return the same objects
     with patch(
-        "config.custom_components.openwb2mqtt.common.copy.deepcopy",
+        "custom_components.openwb2mqtt.common.copy.deepcopy",
         side_effect=lambda x: x,
     ):
         # Call the function
@@ -172,7 +172,7 @@ async def test_async_setup_entities_with_additional_processing(
 
     # Mock the copy.deepcopy function to return the same objects
     with patch(
-        "config.custom_components.openwb2mqtt.common.copy.deepcopy",
+        "custom_components.openwb2mqtt.common.copy.deepcopy",
         side_effect=lambda x: x,
     ):
         # Call the function
@@ -210,11 +210,11 @@ async def test_async_setup_entities_with_additional_processing(
     [
         (
             async_setup_sensors,
-            "config.custom_components.openwb2mqtt.sensor.openwbSensor",
+            "custom_components.openwb2mqtt.sensor.openwbSensor",
         ),
         (
             async_setup_binary_sensors,
-            "config.custom_components.openwb2mqtt.binary_sensor.openwbBinarySensor",
+            "custom_components.openwb2mqtt.binary_sensor.openwbBinarySensor",
         ),
     ],
 )
@@ -312,10 +312,10 @@ async def test_async_setup_selects(hass: HomeAssistant) -> None:
     # Mock the entity class import and copy.deepcopy
     with (
         patch(
-            "config.custom_components.openwb2mqtt.select.openwbSelect"
+            "custom_components.openwb2mqtt.select.openwbSelect"
         ) as mock_entity_class,
         patch(
-            "config.custom_components.openwb2mqtt.common.copy.deepcopy",
+            "custom_components.openwb2mqtt.common.copy.deepcopy",
             side_effect=lambda x: x,
         ),
     ):
@@ -383,10 +383,10 @@ async def test_async_setup_numbers(hass: HomeAssistant) -> None:
     # Mock the entity class import and copy.deepcopy
     with (
         patch(
-            "config.custom_components.openwb2mqtt.number.openWBNumber"
+            "custom_components.openwb2mqtt.number.openWBNumber"
         ) as mock_entity_class,
         patch(
-            "config.custom_components.openwb2mqtt.common.copy.deepcopy",
+            "custom_components.openwb2mqtt.common.copy.deepcopy",
             side_effect=lambda x: x,
         ),
     ):
