@@ -35,7 +35,7 @@ from homeassistant.const import (
     UnitOfPower,
 )
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity import EntityCategory, EntityDescription
 from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
@@ -43,13 +43,14 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
-# Platform.SWITCH,
 PLATFORMS = [
     Platform.BINARY_SENSOR,
+    Platform.DATETIME,
     Platform.LOCK,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
+    Platform.SWITCH,
 ]
 
 # Global values
@@ -378,7 +379,10 @@ class openwbChargeTemplateSelectEntityDescription(openwbSelectEntityDescription)
     options back to template values.
     """
 
-    template_path: tuple[str, ...] = ()
+    template_path: tuple[str | int, ...] = ()
+    # If set, the entity is unavailable while this path is missing from the
+    # template (e.g. no target charging plan exists).
+    available_path: tuple[str | int, ...] | None = None
 
 
 @dataclass(frozen=False)
@@ -388,6 +392,26 @@ class openwbSwitchEntityDescription(SwitchEntityDescription):
     mqttTopicCommand: str | None = None
     mqttTopicCurrentValue: str | None = None
     mqttTopicChargeMode: str | None = None
+
+
+@dataclass(frozen=False)
+class openwbChargeTemplateSwitchEntityDescription(SwitchEntityDescription):
+    """A switch backed by a boolean in the chargepoint's active charge template."""
+
+    template_path: tuple[str | int, ...] = ()
+    # See openwbChargeTemplateSelectEntityDescription.available_path.
+    available_path: tuple[str | int, ...] | None = None
+    # Template paths shown as extra state attributes ({attribute: path}).
+    attribute_paths: dict[str, tuple[str | int, ...]] | None = None
+
+
+@dataclass(frozen=False)
+class openwbChargeTemplateDateTimeEntityDescription(EntityDescription):
+    """The departure time of a target charging plan in the charge template."""
+
+    plan_path: tuple[str | int, ...] = ()
+    # Template paths (relative to plan_path) shown as extra state attributes.
+    attribute_paths: dict[str, tuple[str | int, ...]] | None = None
 
 
 @dataclass(frozen=False)
@@ -407,17 +431,23 @@ class openWBNumberEntityDescription(NumberEntityDescription):
 class openwbChargeTemplateNumberEntityDescription(openWBNumberEntityDescription):
     """A number backed by a value in the chargepoint's active charge template."""
 
-    template_path: tuple[str, ...] = ()
+    template_path: tuple[str | int, ...] = ()
     # Convert between the template's unit and the entity's unit.
     from_template: Callable[[Any], float | None] | None = None
     to_template: Callable[[float], Any] = int
+    # Further (path, value) changes published together with the value.
+    extra_changes: tuple[tuple[tuple[str | int, ...], Any], ...] = ()
+    # See openwbChargeTemplateSelectEntityDescription.available_path.
+    available_path: tuple[str | int, ...] | None = None
+    # Limit the maximum to 16 A or 32 A depending on the wallbox power option.
+    max_from_wallbox_power: bool = False
 
 
 @dataclass(frozen=False)
 class openwbChargeTemplateSensorEntityDescription(openwbSensorEntityDescription):
     """A sensor showing a value of the chargepoint's active charge template."""
 
-    template_path: tuple[str, ...] = ()
+    template_path: tuple[str | int, ...] = ()
     from_template: Callable[[Any], Any] | None = None
 
 
@@ -1029,6 +1059,63 @@ SELECTS_PER_CHARGEPOINT = [
     ),
 ]
 
+# Target charging (Zielladen): the first plan of the chargepoint's template.
+SCHEDULED_PLAN = ("chargemode", "scheduled_charging", "plans", 0)
+SCHEDULED_PHASES_MAP = {0: "Automatik", 1: "1 Phase", 3: "Max. Phasen"}
+
+SELECTS_PER_CHARGEPOINT += [
+    openwbChargeTemplateSelectEntityDescription(
+        key="scheduled_plan_limit",
+        name="Begrenzung (Zielladen)",
+        entity_category=EntityCategory.CONFIG,
+        template_path=(*SCHEDULED_PLAN, "limit", "selected"),
+        available_path=SCHEDULED_PLAN,
+        valueMapCurrentValue={"soc": "SoC", "amount": "Energiemenge"},
+        valueMapCommand={"SoC": "soc", "Energiemenge": "amount"},
+        options=["SoC", "Energiemenge"],
+    ),
+    openwbChargeTemplateSelectEntityDescription(
+        key="scheduled_plan_phases",
+        name="Phasen (Zielladen)",
+        icon="mdi:sine-wave",
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        template_path=(*SCHEDULED_PLAN, "phases_to_use"),
+        available_path=SCHEDULED_PLAN,
+        valueMapCurrentValue=dict(SCHEDULED_PHASES_MAP),
+        valueMapCommand={v: k for k, v in SCHEDULED_PHASES_MAP.items()},
+        options=list(SCHEDULED_PHASES_MAP.values()),
+    ),
+    openwbChargeTemplateSelectEntityDescription(
+        key="scheduled_plan_phases_pv",
+        name="Phasen PV (Zielladen)",
+        icon="mdi:sine-wave",
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        template_path=(*SCHEDULED_PLAN, "phases_to_use_pv"),
+        available_path=SCHEDULED_PLAN,
+        valueMapCurrentValue=dict(SCHEDULED_PHASES_MAP),
+        valueMapCommand={v: k for k, v in SCHEDULED_PHASES_MAP.items()},
+        options=list(SCHEDULED_PHASES_MAP.values()),
+    ),
+    openwbChargeTemplateSelectEntityDescription(
+        key="scheduled_plan_frequency",
+        name="Wiederholung (Zielladen)",
+        icon="mdi:calendar-sync",
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        template_path=(*SCHEDULED_PLAN, "frequency", "selected"),
+        available_path=SCHEDULED_PLAN,
+        valueMapCurrentValue={
+            "once": "Einmalig",
+            "daily": "Täglich",
+            "weekly": "Wöchentlich",
+        },
+        valueMapCommand={"Einmalig": "once", "Täglich": "daily", "Wöchentlich": "weekly"},
+        options=["Einmalig", "Täglich", "Wöchentlich"],
+    ),
+]
+
 NUMBERS_PER_CHARGEPOINT = [
     openWBNumberEntityDescription(
         key="manual_soc",
@@ -1189,6 +1276,96 @@ NUMBERS_PER_CHARGEPOINT = [
         template_path=("chargemode", "eco_charging", "limit", "amount"),
         from_template=lambda x: _safeFloat(x, 1000),
         to_template=lambda x: int(round(x * 1000)),
+    ),
+]
+
+NUMBERS_PER_CHARGEPOINT += [
+    openwbChargeTemplateNumberEntityDescription(
+        key="scheduled_plan_soc_target",
+        name="Ziel-SoC (Zielladen)",
+        native_unit_of_measurement=PERCENTAGE,
+        device_class=NumberDeviceClass.BATTERY,
+        native_min_value=5,
+        native_max_value=100,
+        native_step=5,
+        entity_category=EntityCategory.CONFIG,
+        template_path=(*SCHEDULED_PLAN, "limit", "soc_scheduled"),
+        # A target SoC only has an effect when the plan is limited by SoC.
+        extra_changes=(((*SCHEDULED_PLAN, "limit", "selected"), "soc"),),
+        available_path=SCHEDULED_PLAN,
+    ),
+    openwbChargeTemplateNumberEntityDescription(
+        key="scheduled_plan_soc_limit",
+        name="SoC-Limit (Zielladen)",
+        native_unit_of_measurement=PERCENTAGE,
+        device_class=NumberDeviceClass.BATTERY,
+        native_min_value=5,
+        native_max_value=100,
+        native_step=5,
+        entity_category=EntityCategory.CONFIG,
+        # Maximum SoC when charging with surplus (before and after the target).
+        template_path=(*SCHEDULED_PLAN, "limit", "soc_limit"),
+        available_path=SCHEDULED_PLAN,
+    ),
+    openwbChargeTemplateNumberEntityDescription(
+        key="scheduled_plan_energy",
+        name="Energiemenge (Zielladen)",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=NumberDeviceClass.ENERGY,
+        native_min_value=1,
+        native_max_value=100,
+        native_step=1,
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        # openWB stores Wh
+        template_path=(*SCHEDULED_PLAN, "limit", "amount"),
+        from_template=lambda x: _safeFloat(x, 1000),
+        to_template=lambda x: int(round(x * 1000)),
+        # An energy amount only has an effect when the plan is limited by energy.
+        extra_changes=(((*SCHEDULED_PLAN, "limit", "selected"), "amount"),),
+        available_path=SCHEDULED_PLAN,
+    ),
+    openwbChargeTemplateNumberEntityDescription(
+        key="scheduled_plan_current",
+        name="Ladestrom (Zielladen)",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=NumberDeviceClass.CURRENT,
+        icon="mdi:current-ac",
+        native_min_value=6,
+        native_max_value=32,
+        native_step=1,
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
+        # Current for charging from the grid to reach the target in time.
+        template_path=(*SCHEDULED_PLAN, "current"),
+        available_path=SCHEDULED_PLAN,
+        max_from_wallbox_power=True,
+    ),
+]
+
+SWITCHES_PER_CHARGEPOINT = [
+    openwbChargeTemplateSwitchEntityDescription(
+        key="scheduled_plan_active",
+        name="Plan aktiv (Zielladen)",
+        icon="mdi:calendar-check",
+        entity_category=EntityCategory.CONFIG,
+        template_path=(*SCHEDULED_PLAN, "active"),
+        available_path=SCHEDULED_PLAN,
+        attribute_paths={
+            "plan_name": (*SCHEDULED_PLAN, "name"),
+            "plan_id": (*SCHEDULED_PLAN, "id"),
+        },
+    ),
+]
+
+DATETIMES_PER_CHARGEPOINT = [
+    openwbChargeTemplateDateTimeEntityDescription(
+        key="scheduled_plan_departure",
+        name="Abfahrt (Zielladen)",
+        icon="mdi:car-clock",
+        entity_category=EntityCategory.CONFIG,
+        plan_path=SCHEDULED_PLAN,
+        attribute_paths={"plan_name": ("name",), "plan_id": ("id",)},
     ),
 ]
 

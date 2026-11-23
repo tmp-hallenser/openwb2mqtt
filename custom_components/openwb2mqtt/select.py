@@ -401,6 +401,12 @@ class openwbChargeTemplateSelect(OpenWBBaseEntity, SelectEntity):
         self._manager = manager
 
     @property
+    def available(self) -> bool:
+        """Unavailable while the template lacks the entity's required part."""
+        path = self.entity_description.available_path
+        return path is None or self._manager.get(path) is not None
+
+    @property
     def options(self) -> list[str]:
         """Return the options, plus the current one if openWB uses another value."""
         options = list(self.entity_description.options or [])

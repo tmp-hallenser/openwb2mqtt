@@ -351,7 +351,7 @@ class openwbChargeTemplateNumber(OpenWBBaseEntity, NumberEntity):
         self._attr_name = description.name
         self._manager = manager
 
-        if description.key in {
+        if description.max_from_wallbox_power or description.key in {
             "instant_charging_current_control",
             "pv_charging_min_current_control",
         }:
@@ -359,6 +359,12 @@ class openwbChargeTemplateNumber(OpenWBBaseEntity, NumberEntity):
                 CONF_WALLBOX_POWER, config_entry.data.get(CONF_WALLBOX_POWER)
             )
             self._attr_native_max_value = 16 if power == "11" else 32
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while the template lacks the entity's required part."""
+        path = self.entity_description.available_path
+        return path is None or self._manager.get(path) is not None
 
     @property
     def native_value(self) -> float | None:
@@ -380,8 +386,15 @@ class openwbChargeTemplateNumber(OpenWBBaseEntity, NumberEntity):
         """Write the value into the charge template.
 
         The state changes once openWB publishes the updated template.
+        Values in ``extra_changes`` are written in the same message, e.g. the
+        target SoC also switches the plan's limit to "soc".
         """
-        await self._manager.async_set(
-            self.entity_description.template_path,
-            self.entity_description.to_template(value),
+        await self._manager.async_set_many(
+            [
+                (
+                    self.entity_description.template_path,
+                    self.entity_description.to_template(value),
+                ),
+                *self.entity_description.extra_changes,
+            ]
         )
