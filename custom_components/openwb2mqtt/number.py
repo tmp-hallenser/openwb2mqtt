@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from homeassistant.components import mqtt
@@ -19,6 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
+from .charge_template import ChargeTemplateManager
 from .common import OpenWBBaseEntity, async_setup_numbers
 from .const import (
     COMM_METHOD_HTTP,
@@ -28,8 +28,9 @@ from .const import (
     DEVICETYPE,
     DOMAIN,
     MANUFACTURER,
+    MQTT_ROOT_TOPIC,
     NUMBERS_PER_CHARGEPOINT,
-    openwbDynamicNumberEntityDescription,
+    openwbChargeTemplateNumberEntityDescription,
     openWBNumberEntityDescription,
 )
 from .coordinator import OpenWB2MqttDataUpdateCoordinator
@@ -59,12 +60,12 @@ async def async_setup_entry(
             regular_numbers = [
                 desc
                 for desc in NUMBERS_PER_CHARGEPOINT
-                if not isinstance(desc, openwbDynamicNumberEntityDescription)
+                if not isinstance(desc, openwbChargeTemplateNumberEntityDescription)
             ]
-            dynamic_numbers = [
+            template_numbers = [
                 desc
                 for desc in NUMBERS_PER_CHARGEPOINT
-                if isinstance(desc, openwbDynamicNumberEntityDescription)
+                if isinstance(desc, openwbChargeTemplateNumberEntityDescription)
             ]
 
             def process_chargepoint_numbers(
@@ -85,19 +86,18 @@ async def async_setup_entry(
                 process_chargepoint_numbers,
             )
 
-            if dynamic_numbers:
-                entities = [
-                    openwbDynamicNumber(
-                        config_entry=config,
-                        uniqueID=config.unique_id,
-                        description=desc,
-                        device_friendly_name=f"Chargepoint {config.data[DEVICEID]}",
-                        mqtt_root=config.data["mqttroot"],
-                        device_id=config.data[DEVICEID],
-                    )
-                    for desc in dynamic_numbers
-                ]
-                async_add_entities(entities)
+            manager: ChargeTemplateManager = hass.data[DOMAIN][config.entry_id]
+            async_add_entities(
+                openwbChargeTemplateNumber(
+                    config_entry=config,
+                    uniqueID=config.unique_id,
+                    description=desc,
+                    device_friendly_name=f"Chargepoint {config.data[DEVICEID]}",
+                    mqtt_root=config.data[MQTT_ROOT_TOPIC],
+                    manager=manager,
+                )
+                for desc in template_numbers
+            )
 
 
 class OpenWB2MqttApiNumber(CoordinatorEntity, NumberEntity):
@@ -324,10 +324,10 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
         return state.state
 
 
-class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
-    """Entity representing openWB numbers with dynamic MQTT topic subscription."""
+class openwbChargeTemplateNumber(OpenWBBaseEntity, NumberEntity):
+    """Number for a value in the chargepoint's active charge template."""
 
-    entity_description: openwbDynamicNumberEntityDescription
+    entity_description: openwbChargeTemplateNumberEntityDescription
 
     def __init__(
         self,
@@ -335,156 +335,52 @@ class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
         uniqueID: str,
         device_friendly_name: str,
         mqtt_root: str,
-        description: openwbDynamicNumberEntityDescription,
-        device_id: int,
-        state: float | None = None,
-        mode: NumberMode = NumberMode.AUTO,
+        description: openwbChargeTemplateNumberEntityDescription,
+        manager: ChargeTemplateManager,
     ) -> None:
-        """Initialize the number entity and the openWB device."""
+        """Initialize the number entity."""
         super().__init__(
             device_friendly_name=device_friendly_name,
             mqtt_root=mqtt_root,
         )
-
         self.config_entry = config_entry
         self.entity_description = description
         self._attr_unique_id = slugify(f"{uniqueID}-{description.name}")
         self.entity_id = f"{NUMBER_DOMAIN}.{slugify(f'{uniqueID}_{description.name}')}"
         self._attr_name = description.name
+        self._manager = manager
 
-        self._attr_native_value = state
-        self._attr_mode = mode
-
-        self.mqtt_root = mqtt_root
-        self.device_id = device_id
-        self._charge_template_id = None
-        self._unsubscribe_template = None
-
-        # Set native min/max/step values from the entity description
-        self._attr_native_min_value = description.native_min_value
-        self._attr_native_max_value = description.native_max_value
-        self._attr_native_step = description.native_step
-
-        if self.entity_description.key in {
+        if description.key in {
             "instant_charging_current_control",
             "pv_charging_min_current_control",
         }:
-            power = self.config_entry.options.get(
-                CONF_WALLBOX_POWER, self.config_entry.data.get(CONF_WALLBOX_POWER)
+            power = config_entry.options.get(
+                CONF_WALLBOX_POWER, config_entry.data.get(CONF_WALLBOX_POWER)
             )
-            if power == "11":
-                self._attr_native_max_value = 16
-            else:
-                self._attr_native_max_value = 32
+            self._attr_native_max_value = 16 if power == "11" else 32
 
-    async def async_added_to_hass(self):
-        """Subscribe to MQTT events."""
-        # First, subscribe to the connected vehicle config topic to get the charge template ID
-        config_topic = f"{self.mqtt_root}/chargepoint/{self.device_id}/get/connected_vehicle/config"
+    @property
+    def native_value(self) -> float | None:
+        """Return the value from the charge template in the entity's unit."""
+        value = self._manager.get(self.entity_description.template_path)
+        if value is None:
+            return None
+        if self.entity_description.from_template is not None:
+            return self.entity_description.from_template(value)
+        return value
 
-        @callback
-        def config_message_received(message):
-            """Handle new MQTT messages for the config topic."""
-            try:
-                payload = json.loads(message.payload)
-                new_charge_template_id = payload.get("charge_template")
-
-                if (
-                    new_charge_template_id is not None
-                    and new_charge_template_id != self._charge_template_id
-                ):
-                    _LOGGER.debug(
-                        "Charge template ID changed from %s to %s",
-                        self._charge_template_id,
-                        new_charge_template_id,
-                    )
-                    self._charge_template_id = new_charge_template_id
-
-                    # Update the subscription to the charge template topic
-                    self.hass.async_create_task(
-                        self._update_template_subscription()
-                    )
-            except (json.JSONDecodeError, ValueError) as err:
-                _LOGGER.error("Error parsing config message: %s", err)
-
-        await self.async_subscribe_topic(config_topic, config_message_received)
-        _LOGGER.debug("Subscribed to config MQTT topic: %s", config_topic)
-
-    async def _update_template_subscription(self):
-        """Update the subscription to the charge template topic."""
-        # Unsubscribe from the old topic if it exists
-        if self._unsubscribe_template is not None:
-            self._unsubscribe_template()
-            self._unsubscribe_template = None
-
-        if self._charge_template_id is None:
-            _LOGGER.debug(
-                "No charge template ID available, not subscribing to template topic"
-            )
-            return
-
-        # Format the template topic with the charge template ID
-        template_topic = self.entity_description.mqttTopicTemplate.format(
-            mqtt_root=self.mqtt_root,
-            charge_template_id=self._charge_template_id,
-            chargepoint_id=self.device_id,
+    async def async_added_to_hass(self) -> None:
+        """Update the state whenever openWB publishes the charge template."""
+        self.async_on_remove(
+            self._manager.async_add_listener(self.async_write_ha_state)
         )
 
-        @callback
-        def template_message_received(message):
-            """Handle new MQTT messages for the template topic."""
-            try:
-                self._attr_native_value = message.payload
+    async def async_set_native_value(self, value: float) -> None:
+        """Write the value into the charge template.
 
-                # Convert data if a conversion function is defined
-                if self.entity_description.value_fn is not None:
-                    self._attr_native_value = self.entity_description.value_fn(
-                        self._attr_native_value
-                    )
-
-                # Update entity state with value published on MQTT
-                self.async_write_ha_state()
-            except Exception as err:
-                _LOGGER.error("Error processing template message: %s", err)
-
-        self._unsubscribe_template = await mqtt.async_subscribe(
-            self.hass,
-            template_topic,
-            template_message_received,
-            1,
-        )
-        _LOGGER.debug("Subscribed to template MQTT topic: %s", template_topic)
-
-    async def async_will_remove_from_hass(self):
-        """Unsubscribe from the charge template topic when entity is removed."""
-        if self._unsubscribe_template is not None:
-            self._unsubscribe_template()
-            self._unsubscribe_template = None
-
-    async def async_set_native_value(self, value):
-        """Update the current value.
-
-        After set_native_value --> the result is published to MQTT.
-        But the HA number shall only change when the MQTT message on the template topic is received.
-        Only then, openWB has changed the setting as well.
+        The state changes once openWB publishes the updated template.
         """
-        if self._charge_template_id is None:
-            _LOGGER.error("Cannot set value: No charge template ID available")
-            return
-
-        # Format the command topic with the charge template ID
-        command_topic = self.entity_description.mqttTopicCommandTemplate.format(
-            mqtt_root=self.mqtt_root,
-            charge_template_id=self._charge_template_id,
-            chargepoint_id=self.device_id,
+        await self._manager.async_set(
+            self.entity_description.template_path,
+            self.entity_description.to_template(value),
         )
-
-        # Check if this value must be converted before publishing
-        if self.entity_description.convert_before_publish_fn is not None:
-            value = self.entity_description.convert_before_publish_fn(value)
-
-        # Convert value to integer as required by openWB
-        payload = str(int(value))
-
-        _LOGGER.debug("Publishing to MQTT topic %s: %s", command_topic, payload)
-        await mqtt.async_publish(self.hass, command_topic, payload)

@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from homeassistant.components import mqtt
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN, SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
+from .charge_template import ChargeTemplateManager
 from .common import OpenWBBaseEntity, async_setup_selects
 from .const import (
     COMM_METHOD_HTTP,
@@ -24,8 +23,9 @@ from .const import (
     DEVICETYPE,
     DOMAIN,
     MANUFACTURER,
+    MQTT_ROOT_TOPIC,
     SELECTS_PER_CHARGEPOINT,
-    openwbDynamicSelectEntityDescription,
+    openwbChargeTemplateSelectEntityDescription,
     openwbSelectEntityDescription,
 )
 from .coordinator import OpenWB2MqttDataUpdateCoordinator
@@ -57,12 +57,12 @@ async def async_setup_entry(
             regular_selects = [
                 desc
                 for desc in SELECTS_PER_CHARGEPOINT
-                if not isinstance(desc, openwbDynamicSelectEntityDescription)
+                if not isinstance(desc, openwbChargeTemplateSelectEntityDescription)
             ]
-            dynamic_selects = [
+            template_selects = [
                 desc
                 for desc in SELECTS_PER_CHARGEPOINT
-                if isinstance(desc, openwbDynamicSelectEntityDescription)
+                if isinstance(desc, openwbChargeTemplateSelectEntityDescription)
             ]
 
             def process_chargepoint_selects(
@@ -92,18 +92,17 @@ async def async_setup_entry(
                 process_chargepoint_selects,
             )
 
-            if dynamic_selects:
-                entities = [
-                    openwbDynamicSelect(
-                        uniqueID=config_entry.unique_id,
-                        description=desc,
-                        device_friendly_name=f"Chargepoint {config_entry.data['DEVICEID']}",
-                        mqtt_root=config_entry.data["mqttroot"],
-                        deviceID=config_entry.data["DEVICEID"],
-                    )
-                    for desc in dynamic_selects
-                ]
-                async_add_entities(entities)
+            manager: ChargeTemplateManager = hass.data[DOMAIN][config_entry.entry_id]
+            async_add_entities(
+                openwbChargeTemplateSelect(
+                    uniqueID=config_entry.unique_id,
+                    description=desc,
+                    device_friendly_name=f"Chargepoint {config_entry.data[DEVICEID]}",
+                    mqtt_root=config_entry.data[MQTT_ROOT_TOPIC],
+                    manager=manager,
+                )
+                for desc in template_selects
+            )
 
 
 class OpenWB2MqttApiSelect(CoordinatorEntity, SelectEntity):
@@ -352,15 +351,6 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
         if not topic.startswith(f"{self.mqtt_root}/"):
             topic = f"{self.mqtt_root}/{topic}"
 
-        if "chargemode" in self.entity_description.key:
-            chargeTemplateID = self.get_assigned_charge_profile(
-                self.hass,
-                DOMAIN,
-            )
-            if chargeTemplateID is not None:
-                if "_chargeTemplateID_" in topic:
-                    topic = topic.replace("_chargeTemplateID_", chargeTemplateID)
-
         _LOGGER.debug("MQTT topic: %s", topic)
 
         # Modify commandValueToPublish if mapping table is defined
@@ -382,217 +372,66 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
 
         return publish_mqtt_message
 
-    @callback
-    def get_assigned_charge_profile(
-        self, hass: HomeAssistant, domain: str
-    ) -> str | None:
-        """Get the charge profile that is currently assigned to this charge point."""
-        # For test_select_with_dynamic_command_topic
-        if (
-            self.entity_description.key == "chargemode"
-            and "test_select_with_dynamic_command_topic" in self.entity_id
-        ):
-            return "456"
 
-        # Regular lookup via entity registry
-        ent_reg = er.async_get(hass)
-        # sensor.openwb_openwb_chargepoint_4_lade_profil
-        unique_id = slugify(f"{self.mqtt_root}_chargepoint_{self.deviceID}_lade_profil")
-        charge_profile_id = ent_reg.async_get_entity_id(
-            Platform.SENSOR,
-            domain,
-            unique_id,
-        )
-        if charge_profile_id is None:
-            return None
+class openwbChargeTemplateSelect(OpenWBBaseEntity, SelectEntity):
+    """Select for a value in the chargepoint's active charge template."""
 
-        state = hass.states.get(charge_profile_id)
-        if state is None:
-            return None
-
-        return state.state
-
-
-class openwbDynamicSelect(OpenWBBaseEntity, SelectEntity):
-    """Entity representing a select with dynamic MQTT topic subscription."""
-
-    entity_description: openwbDynamicSelectEntityDescription
+    entity_description: openwbChargeTemplateSelectEntityDescription
 
     def __init__(
         self,
         uniqueID: str,
         device_friendly_name: str,
-        description: openwbDynamicSelectEntityDescription,
+        description: openwbChargeTemplateSelectEntityDescription,
         mqtt_root: str,
-        deviceID: int | None = None,
+        manager: ChargeTemplateManager,
     ) -> None:
-        """Initialize the select and the openWB device."""
+        """Initialize the select."""
         super().__init__(
             device_friendly_name=device_friendly_name,
             mqtt_root=mqtt_root,
         )
-        # Initialize the entity
         self.entity_description = description
         self._attr_unique_id = slugify(f"{uniqueID}-{description.name}")
         self.entity_id = f"{SELECT_DOMAIN}.{slugify(f'{uniqueID}_{description.name}')}"
         self._attr_name = description.name
-
-        self._attr_current_option = None
-        self.deviceID = deviceID
-        self.mqtt_root = mqtt_root
-        self._charge_template_id = None
-        self._unsubscribe_current_value = None
+        self._manager = manager
 
     @property
     def options(self) -> list[str]:
-        """Return a set of selectable options."""
-        if self.entity_description.options is not None:
-            return self.entity_description.options
-        return []
+        """Return the options, plus the current one if openWB uses another value."""
+        options = list(self.entity_description.options or [])
+        current = self.current_option
+        if current is not None and current not in options:
+            options.append(current)
+        return options
 
-    async def async_added_to_hass(self):
-        """Subscribe to MQTT events."""
-        # First, subscribe to the connected vehicle config topic to get the charge template ID
-        config_topic = (
-            f"{self.mqtt_root}/chargepoint/{self.deviceID}/get/connected_vehicle/config"
+    @property
+    def current_option(self) -> str | None:
+        """Return the option matching the value in the charge template."""
+        value = self._manager.get(self.entity_description.template_path)
+        if value is None:
+            return None
+        value_map = self.entity_description.valueMapCurrentValue
+        if value_map is None:
+            return str(value)
+        return value_map.get(value, str(value))
+
+    async def async_added_to_hass(self) -> None:
+        """Update the state whenever openWB publishes the charge template."""
+        self.async_on_remove(
+            self._manager.async_add_listener(self.async_write_ha_state)
         )
-
-        @callback
-        def config_message_received(message):
-            """Handle new MQTT messages for the config topic."""
-            try:
-                payload = json.loads(message.payload)
-                new_charge_template_id = payload.get("charge_template")
-
-                if (
-                    new_charge_template_id is not None
-                    and new_charge_template_id != self._charge_template_id
-                ):
-                    _LOGGER.debug(
-                        "Charge template ID changed from %s to %s",
-                        self._charge_template_id,
-                        new_charge_template_id,
-                    )
-                    self._charge_template_id = new_charge_template_id
-
-                    # Update the subscription to the current value topic
-                    self.hass.async_create_task(
-                        self._update_current_value_subscription()
-                    )
-            except (json.JSONDecodeError, ValueError) as err:
-                _LOGGER.error("Error parsing config message: %s", err)
-
-        await self.async_subscribe_topic(config_topic, config_message_received)
-        _LOGGER.debug("Subscribed to config MQTT topic: %s", config_topic)
-
-    async def _update_current_value_subscription(self):
-        """Update the subscription to the current value topic."""
-        # Unsubscribe from the old topic if it exists
-        if self._unsubscribe_current_value is not None:
-            self._unsubscribe_current_value()
-            self._unsubscribe_current_value = None
-
-        if self._charge_template_id is None:
-            _LOGGER.debug(
-                "No charge template ID available, not subscribing to current value topic"
-            )
-            return
-
-        # Format the current value topic with the charge template ID
-        current_value_topic = (
-            self.entity_description.mqttTopicCurrentValueTemplate.format(
-                mqtt_root=self.mqtt_root,
-                charge_template_id=self._charge_template_id,
-                chargepoint_id=self.deviceID,
-            )
-        )
-
-        @callback
-        def current_value_message_received(message):
-            """Handle new MQTT messages for the current value topic."""
-            try:
-                payload = message.payload
-                # Convert data if a conversion function is defined
-                if self.entity_description.value_fn is not None:
-                    payload = self.entity_description.value_fn(payload)
-
-                # Map values as defined in the value map dict
-                if self.entity_description.valueMapCurrentValue is not None:
-                    try:
-                        self._attr_current_option = (
-                            self.entity_description.valueMapCurrentValue.get(
-                                int(payload)
-                            )
-                        )
-                    except ValueError:
-                        self._attr_current_option = (
-                            self.entity_description.valueMapCurrentValue.get(
-                                payload, None
-                            )
-                        )
-                else:
-                    self._attr_current_option = payload
-
-                self.async_write_ha_state()
-            except Exception as err:
-                _LOGGER.error("Error processing current value message: %s", err)
-
-        self._unsubscribe_current_value = await mqtt.async_subscribe(
-            self.hass,
-            current_value_topic,
-            current_value_message_received,
-            1,
-        )
-        _LOGGER.debug("Subscribed to current value MQTT topic: %s", current_value_topic)
 
     async def async_select_option(self, option: str) -> None:
-        """Change the selected option."""
-        success = await self.publishToMQTT(option)
-        if success:
-            return
-        _LOGGER.error("Error publishing MQTT message")
-
-    async def publishToMQTT(self, commandValueToPublish) -> bool:
-        """Publish message to MQTT.
-
-        If defined, you can remap the value in HA to the value that is required by the integration.
-        """
-        publish_mqtt_message = False
-
-        if self._charge_template_id is None:
-            _LOGGER.error("No charge template ID available, cannot publish command")
-            return False
-
-        # Format the command topic with the charge template ID
-        topic = self.entity_description.mqttTopicCommandTemplate.format(
-            mqtt_root=self.mqtt_root,
-            charge_template_id=self._charge_template_id,
-            chargepoint_id=self.device_ID,
-        )
-
-        _LOGGER.debug("MQTT topic: %s", topic)
-
-        # Modify commandValueToPublish if mapping table is defined
-        if self.entity_description.valueMapCommand is not None:
-            try:
-                payload = self.entity_description.valueMapCommand.get(
-                    commandValueToPublish
+        """Write the selected option into the charge template."""
+        value_map = self.entity_description.valueMapCommand
+        if value_map is not None:
+            if option not in value_map:
+                raise ServiceValidationError(
+                    f"{option} cannot be selected for {self.entity_id}"
                 )
-                _LOGGER.debug("MQTT payload: %s", payload)
-                publish_mqtt_message = True
-            except ValueError:
-                publish_mqtt_message = False
+            value = value_map[option]
         else:
-            payload = commandValueToPublish
-            publish_mqtt_message = True
-
-        if publish_mqtt_message:
-            await mqtt.async_publish(self.hass, topic, payload, 0, False)
-
-        return publish_mqtt_message
-
-    async def async_will_remove_from_hass(self):
-        """Unsubscribe from the current value topic when entity is removed."""
-        if self._unsubscribe_current_value is not None:
-            self._unsubscribe_current_value()
-            self._unsubscribe_current_value = None
+            value = option
+        await self._manager.async_set(self.entity_description.template_path, value)

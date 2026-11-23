@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import datetime
 import json
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
@@ -174,6 +175,12 @@ def _safeFloat(x: str, c=1.0, op="div") -> float | None:
             return float(x) * c
     except (ValueError, TypeError):
         return None
+
+
+def _ctPerKwh(x) -> float | None:
+    """Convert openWB's EUR/Wh price to ct/kWh, avoiding float noise."""
+    value = _safeFloat(x, 100000, op="mult")
+    return None if value is None else round(value, 4)
 
 
 def _safeJsonGet(x: str, key: str, default=None):
@@ -364,12 +371,14 @@ class openwbSelectEntityDescription(SelectEntityDescription):
 
 
 @dataclass(frozen=False)
-class openwbDynamicSelectEntityDescription(openwbSelectEntityDescription):
-    """Enhance the select entity description for openWB with dynamic MQTT topic support."""
+class openwbChargeTemplateSelectEntityDescription(openwbSelectEntityDescription):
+    """A select backed by a value in the chargepoint's active charge template.
 
-    # This will be used to store the base topic pattern that will be formatted with the charge template ID
-    mqttTopicCurrentValueTemplate: str | None = None
-    mqttTopicCommandTemplate: str | None = None
+    valueMapCurrentValue maps template values to options, valueMapCommand maps
+    options back to template values.
+    """
+
+    template_path: tuple[str, ...] = ()
 
 
 @dataclass(frozen=False)
@@ -395,13 +404,13 @@ class openWBNumberEntityDescription(NumberEntityDescription):
 
 
 @dataclass(frozen=False)
-class openwbDynamicNumberEntityDescription(openWBNumberEntityDescription):
-    """Enhance the number entity description for openWB with dynamic MQTT topic support."""
+class openwbChargeTemplateNumberEntityDescription(openWBNumberEntityDescription):
+    """A number backed by a value in the chargepoint's active charge template."""
 
-    # This will be used to store the base topic pattern that will be formatted with the charge template ID
-    mqttTopicTemplate: str | None = None
-    mqttTopicCommandTemplate: str | None = None
-    convert_before_publish_fn: Callable | None = None
+    template_path: tuple[str, ...] = ()
+    # Convert between the template's unit and the entity's unit.
+    from_template: Callable[[Any], float | None] | None = None
+    to_template: Callable[[float], Any] = int
 
 
 # Define a special sensor type for dynamic MQTT topic subscription
@@ -854,7 +863,7 @@ BINARY_SENSORS_PER_CHARGEPOINT = [
 ]
 
 SELECTS_PER_CHARGEPOINT = [
-    openwbDynamicSelectEntityDescription(
+    openwbChargeTemplateSelectEntityDescription(
         key="instant_charging_limitation",
         api_key="instant_charging_limit",
         api_key_command="instant_charging_limit",
@@ -872,15 +881,11 @@ SELECTS_PER_CHARGEPOINT = [
             "amount": "Energiemenge",
         },
         valueMapCommand={"Keine": "none", "SoC": "soc", "Energiemenge": "amount"},
-        mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
-        mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
+        template_path=("chargemode", "instant_charging", "limit", "selected"),
         options=["Keine", "SoC", "Energiemenge"],
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "instant_charging", "limit", "selected"
-        ),
         api_value_fn=lambda x: x,
     ),
-    openwbSelectEntityDescription(
+    openwbChargeTemplateSelectEntityDescription(
         key="chargemode",
         api_key="chargemode",
         api_key_command="set_chargemode",
@@ -894,17 +899,18 @@ SELECTS_PER_CHARGEPOINT = [
             "pv_charging": "PV Charging",
             "eco_charging": "ECO Charging",
             "target": "Target Charging",
-            "standby": "Standby",
             "stop": "Stop",
             "pv": "PV Charging",
+            "eco": "ECO Charging",
+            "bidi_charging": "Bidi Charging",
         },
         valueMapCommand={
-            "Instant Charging": "instant",
-            # "Scheduled Charging": "scheduled_charging",
-            "PV Charging": "pv",
-            "ECO Charging": "eco",
-            "Target Charging": "target",
+            "Instant Charging": "instant_charging",
+            "PV Charging": "pv_charging",
+            "ECO Charging": "eco_charging",
+            "Target Charging": "scheduled_charging",
             "Stop": "stop",
+            "Bidi Charging": "bidi_charging",
         },
         api_value_map_command={
             "Instant Charging": "instant",
@@ -913,18 +919,16 @@ SELECTS_PER_CHARGEPOINT = [
             "Target Charging": "target",
             "Stop": "stop",
         },
-        mqttTopicCommand="simpleAPI/set/chargepoint/_chargePointID_/chargemode",
-        mqttTopicCurrentValue="get/connected_vehicle/config",
+        template_path=("chargemode", "selected"),
+        # "Bidi Charging" is only offered while it is active (see
+        # openwbChargeTemplateSelect.options): it needs bidirectional hardware.
         options=[
             "Instant Charging",
-            # "Scheduled Charging",
             "PV Charging",
             "ECO Charging",
             "Target Charging",
             "Stop",
-            "Standby",
         ],
-        value_fn=lambda x: _safeJsonGet(x, "chargemode"),
         api_value_fn=lambda x: x,
     ),
     openwbSelectEntityDescription(
@@ -1014,7 +1018,7 @@ NUMBERS_PER_CHARGEPOINT = [
         value_fn=lambda x: _safeJsonGet(x, "soc"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
-    openwbDynamicNumberEntityDescription(
+    openwbChargeTemplateNumberEntityDescription(
         key="instant_charging_current_control",
         api_key="instant_charging_current",
         api_key_command="chargecurrent",
@@ -1026,14 +1030,10 @@ NUMBERS_PER_CHARGEPOINT = [
         native_max_value=32.0,
         native_step=1.0,
         entity_category=EntityCategory.CONFIG,
-        mqttTopicTemplate="{mqtt_root}/chargepoint/{chargepoint_id}/set/charge_template",
-        mqttTopicCommandTemplate="{mqtt_root}/simpleAPI/set/chargepoint/{chargepoint_id}/chargecurrent",
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "instant_charging", "current"
-        ),
+        template_path=("chargemode", "instant_charging", "current"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
-    openwbDynamicNumberEntityDescription(
+    openwbChargeTemplateNumberEntityDescription(
         key="pv_charging_min_current_control",
         api_key="pv_charging_min_current",
         api_key_command="minimal_permanent_current",
@@ -1045,14 +1045,10 @@ NUMBERS_PER_CHARGEPOINT = [
         native_max_value=32.0,
         native_step=1.0,
         entity_category=EntityCategory.CONFIG,
-        mqttTopicTemplate="{mqtt_root}/chargepoint/{chargepoint_id}/set/charge_template",
-        mqttTopicCommandTemplate="{mqtt_root}/simpleAPI/set/chargepoint/{chargepoint_id}/minimal_permanent_current",
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "pv_charging", "min_current"
-        ),
+        template_path=("chargemode", "pv_charging", "min_current"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
-    openwbDynamicNumberEntityDescription(
+    openwbChargeTemplateNumberEntityDescription(
         key="instant_charging_energy_limit_control",
         api_key="instant_charging_amount",
         api_key_command="instant_charging_amount",
@@ -1063,19 +1059,13 @@ NUMBERS_PER_CHARGEPOINT = [
         native_max_value=50,
         native_step=1,
         entity_category=EntityCategory.CONFIG,
-        mqttTopicTemplate="{mqtt_root}/chargepoint/{chargepoint_id}/set/charge_template",
-        mqttTopicCommandTemplate="{mqtt_root}/simpleAPI/set/instant_charging_limit_amount",
-        convert_before_publish_fn=lambda x: x * 1000.0,
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "instant_charging", "limit", "amount"
-        )
-        / 1000
-        if _safeNestedGet(x, "chargemode", "instant_charging", "limit", "amount")
-        is not None
-        else None,
+        # openWB stores Wh
+        template_path=("chargemode", "instant_charging", "limit", "amount"),
+        from_template=lambda x: _safeFloat(x, 1000),
+        to_template=lambda x: int(round(x * 1000)),
         api_value_fn=lambda x: _safeFloat(x, 1000),
     ),
-    openwbDynamicNumberEntityDescription(
+    openwbChargeTemplateNumberEntityDescription(
         key="instant_charging_soc_limit_control",
         api_key="instant_charging_soc",
         api_key_command="instant_charging_soc",
@@ -1086,17 +1076,10 @@ NUMBERS_PER_CHARGEPOINT = [
         native_max_value=100,
         native_step=5,
         entity_category=EntityCategory.CONFIG,
-        mqttTopicTemplate="{mqtt_root}/chargepoint/{chargepoint_id}/set/charge_template",
-        mqttTopicCommandTemplate="{mqtt_root}/simpleAPI/set/instant_charging_limit_soc",
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "instant_charging", "limit", "soc"
-        )
-        if _safeNestedGet(x, "chargemode", "instant_charging", "limit", "soc")
-        is not None
-        else None,
+        template_path=("chargemode", "instant_charging", "limit", "soc"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
-    openwbDynamicNumberEntityDescription(
+    openwbChargeTemplateNumberEntityDescription(
         key="price_based_charging_max_price",
         api_key="max_price_eco",
         api_key_command="max_price_eco",
@@ -1108,16 +1091,10 @@ NUMBERS_PER_CHARGEPOINT = [
         native_max_value=100,
         native_step=1,
         entity_category=EntityCategory.CONFIG,
-        mqttTopicTemplate="{mqtt_root}/chargepoint/{chargepoint_id}/set/charge_template",
-        mqttTopicCommandTemplate="{mqtt_root}/simpleAPI/set/chargepoint/{chargepoint_id}/max_price_eco",
-        value_fn=lambda x: _safeFloat(
-            _safeNestedGet(x, "chargemode", "eco_charging", "max_price"),
-            c=100000,
-            op="mult",
-        )
-        if _safeNestedGet(x, "chargemode", "eco_charging", "max_price") is not None
-        else None,
-        # convert_before_publish_fn=lambda x: x / 100000.0,
+        # openWB stores EUR/Wh, the entity shows ct/kWh
+        template_path=("chargemode", "eco_charging", "max_price"),
+        from_template=lambda x: _ctPerKwh(x),
+        to_template=lambda x: x / 100000,
         api_value_fn=lambda x: _safeFloat(x),
     ),
 ]

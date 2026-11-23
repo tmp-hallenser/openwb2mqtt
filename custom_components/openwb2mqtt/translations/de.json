@@ -95,8 +95,8 @@
                     "Target Charging": "Zielladen",
                     "PV Charging": "PV-Laden",
                     "Stop": "Stop",
-                    "Standby": "Standby",
-                    "ECO Charging": "Eco"
+                    "ECO Charging": "Eco",
+                    "Bidi Charging": "Bidirektionales Laden"
                 }
             },
             "selector_connected_vehicle": {

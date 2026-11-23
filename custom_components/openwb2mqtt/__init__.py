@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import OpenWB2MqttApiClient
+from .charge_template import ChargeTemplateManager
 
 # Import global values.
 from .const import (
@@ -17,6 +18,7 @@ from .const import (
     DEVICEID,
     DEVICETYPE,
     DOMAIN,
+    MQTT_ROOT_TOPIC,
     PLATFORMS,
 )
 from .coordinator import OpenWB2MqttDataUpdateCoordinator
@@ -44,9 +46,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         await coordinator.async_config_entry_first_refresh()
         hass.data[DOMAIN][entry.entry_id] = coordinator
-    else:
-        # MQTT setup remains unchanged
-        pass
+    elif entry.data.get(DEVICETYPE) == "chargepoint":
+        # Charge mode, limits and currents are read from and written to the
+        # chargepoint's active charge template.
+        manager = ChargeTemplateManager(
+            hass, entry.data[MQTT_ROOT_TOPIC], entry.data[DEVICEID]
+        )
+        entry.async_on_unload(await manager.async_start())
+        hass.data[DOMAIN][entry.entry_id] = manager
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
