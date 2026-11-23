@@ -1,0 +1,134 @@
+{
+    "issues": {
+        "missing_charge_template": {
+            "title": "openWB: charge template of {entry_title} is not received",
+            "description": "No charge template has arrived on `{state_topic}` since startup. Without this topic, charge mode, limits and charging currents stay unknown and cannot be changed.\n\nIf you use an MQTT bridge to the openWB, add to its configuration:\n\n`topic {state_topic} in`\n`topic {command_topic} out`\n\nThen restart the MQTT broker. This message disappears as soon as the charge template arrives."
+        }
+    },
+    "config": {
+        "abort": {
+            "mqtt_not_configured": "Set up the MQTT integration in Home Assistant first, or choose the HTTP API.",
+            "already_configured": "This device is already configured. Enter a different MQTT root topic/prefix, device type or device ID.",
+            "controller_already_configured": "This wallbox is already configured. Enter a different MQTT root topic/prefix.",
+            "batterie_already_configured": "This battery is already configured. Enter a different MQTT root topic/prefix or device ID.",
+            "counter_already_configured": "This counter is already configured. Enter a different MQTT root topic/prefix or device ID.",
+            "pv_already_configured": "This PV system is already configured. Enter a different MQTT root topic/prefix or device ID.",
+            "vehicle_already_configured": "This vehicle is already configured. Enter a different MQTT root topic/prefix or device ID.",
+            "chargepoint_already_configured": "This chargepoint is already configured. Enter a different MQTT root topic/prefix or device ID."
+        },
+        "step": {
+            "user": {
+                "data": {
+                    "communication_method": "Interface"
+                },
+                "description": "Choose how Home Assistant communicates with the openWB.",
+                "title": "openWB (version 2)"
+            },
+            "details_api": {
+                "data": {
+                    "api_prefix": "API prefix",
+                    "api_url": "API URL",
+                    "api_token": "API token",
+                    "DEVICETYPE": "Device type",
+                    "DEVICEID": "Device ID in openWB (-> status tab)"
+                },
+                "description": "Enter a prefix that uniquely identifies the openWB.\n*If you migrate from MQTT to the API, enter the MQTT root topic here and the integration creates the sensors etc. with the same IDs.*\n\nAdjust the IP address and select the device type.\nThe device types counter, chargepoint, PV system and battery also need the device ID. You find it on the status tab of your openWB.",
+                "title": "API settings for openWB"
+            },
+            "details_mqtt": {
+                "data": {
+                    "mqttroot": "MQTT root topic",
+                    "DEVICETYPE": "Device type",
+                    "DEVICEID": "Device ID in openWB (-> status tab)"
+                },
+                "description": "Enter the MQTT root topic under which the openWB is available on your MQTT broker and select the device type.\nThe device types counter, chargepoint, PV system and battery also need the device ID. You find it on the status tab of your openWB.\nFor the device type wallbox, enter device ID 0.",
+                "title": "MQTT settings for openWB"
+            },
+            "chargepoint": {
+                "data": {
+                    "wallbox_power": "Max. charging power",
+                    "vehicles": "Vehicles (ID=name, comma-separated)"
+                },
+                "description": "Enter the maximum charging power of your wallbox (required) and, optionally, the list of vehicles as a comma-separated list in this format:\n\n\tvehicle ID=vehicle name,vehicle ID=vehicle name\n\nThe vehicle names must match the names in openWB *exactly*; only then are the vehicles shown correctly in the vehicle selection.\nYou find the vehicle ID on the status tab of the openWB.",
+                "title": "Chargepoint settings"
+            }
+        }
+    },
+    "options": {
+        "abort": {
+            "no_conf_options_supported": "This device type has no options."
+        },
+        "step": {
+            "init": {
+                "data": {
+                    "wallbox_power": "Max. charging power",
+                    "vehicles": "Vehicles (ID=name, comma-separated)"
+                },
+                "description": "Enter the maximum charging power of your wallbox (required) and, optionally, the list of vehicles as a comma-separated list in this format:\n\n\tvehicle ID=vehicle name,vehicle ID=vehicle name\n\nThe vehicle names must match the names in openWB *exactly*; only then are the vehicles shown correctly in the vehicle selection.\nYou find the vehicle ID on the status tab of the openWB.",
+                "title": "Chargepoint settings"
+            }
+        }
+    },
+    "selector": {
+        "config_selector_devicetype": {
+            "options": {
+                "controller": "Wallbox",
+                "counter": "Counter",
+                "chargepoint": "Chargepoint",
+                "pv": "PV system",
+                "bat": "Battery",
+                "vehicle": "Vehicle"
+            }
+        }
+    },
+    "entity": {
+        "sensor": {
+            "sensor_lademodus": {
+                "state": {
+                    "Standby": "Standby",
+                    "Stop": "Stop",
+                    "Scheduled Charging": "Target Charging",
+                    "Time Charging": "Time Charging",
+                    "Instant Charging": "Instant Charging",
+                    "PV Charging": "PV Charging"
+                }
+            }
+        },
+        "select": {
+            "selector_chargepoint_chargemode": {
+                "state": {
+                    "Instant Charging": "Instant Charging",
+                    "Target Charging": "Target Charging",
+                    "PV Charging": "PV Charging",
+                    "Stop": "Stop",
+                    "ECO Charging": "ECO Charging",
+                    "Bidi Charging": "Bidirectional Charging"
+                }
+            },
+            "selector_connected_vehicle": {
+                "state": {
+                    "Vehicle 0": "Vehicle 0",
+                    "Vehicle 1": "Vehicle 1",
+                    "Vehicle 2": "Vehicle 2",
+                    "Vehicle 3": "Vehicle 3",
+                    "Vehicle 4": "Vehicle 4",
+                    "Vehicle 5": "Vehicle 5",
+                    "Vehicle 6": "Vehicle 6",
+                    "Vehicle 7": "Vehicle 7",
+                    "Vehicle 8": "Vehicle 8",
+                    "Vehicle 9": "Vehicle 9",
+                    "Vehicle 10": "Vehicle 10"
+                }
+            }
+        },
+        "lock": {
+            "manual_lock": {
+                "name": "Manual lock",
+                "state": {
+                    "locked": "Locked",
+                    "unlocked": "Unlocked"
+                }
+            }
+        }
+    }
+}

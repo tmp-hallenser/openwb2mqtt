@@ -1,6 +1,8 @@
 """Tests for the openwb2mqtt config and options flow."""
 
 from collections.abc import Generator
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -193,3 +195,19 @@ async def test_options_flow_chargepoint_http(hass: HomeAssistant) -> None:
         CONF_WALLBOX_POWER: "22",
         CONF_VEHICLES: {"0": "Standard", "2": "Guest"},
     }
+
+
+def test_translations_have_the_same_keys() -> None:
+    """English and German translations cover the same strings."""
+    folder = Path(__file__).parents[1] / "custom_components/openwb2mqtt/translations"
+
+    def keys(node: dict, prefix: str = "") -> set[str]:
+        result = set()
+        for key, value in node.items():
+            path = f"{prefix}/{key}"
+            result |= keys(value, path) if isinstance(value, dict) else {path}
+        return result
+
+    de = json.loads((folder / "de.json").read_text(encoding="utf-8"))
+    en = json.loads((folder / "en.json").read_text(encoding="utf-8"))
+    assert keys(en) == keys(de)
