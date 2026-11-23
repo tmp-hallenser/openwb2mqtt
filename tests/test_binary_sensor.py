@@ -1,12 +1,15 @@
 """Tests for the openwb2mqtt binary_sensor platform."""
 
-import json
-from unittest.mock import AsyncMock, MagicMock, call, patch
 import time
+from unittest.mock import patch
 
 import pytest
 
-from homeassistant.components import mqtt
+from custom_components.openwb2mqtt.binary_sensor import openwbBinarySensor
+from custom_components.openwb2mqtt.const import (
+    DOMAIN,
+    openwbBinarySensorEntityDescription,
+)
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
@@ -16,21 +19,9 @@ from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     STATE_OFF,
     STATE_ON,
-    STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.setup import async_setup_component
-
-from custom_components.openwb2mqtt.const import (
-    DOMAIN,
-    BINARY_SENSORS_PER_CHARGEPOINT,
-    openwbBinarySensorEntityDescription,
-)
-from custom_components.openwb2mqtt.binary_sensor import openwbBinarySensor
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
 
 
 async def test_binary_sensor_setup(hass: HomeAssistant, mock_mqtt_subscribe) -> None:

@@ -1,11 +1,8 @@
 """Tests for the openwb2mqtt common module."""
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 
 from custom_components.openwb2mqtt.common import (
     OpenWBBaseEntity,
@@ -23,6 +20,7 @@ from custom_components.openwb2mqtt.const import (
     MODEL,
     MQTT_ROOT_TOPIC,
 )
+from homeassistant.core import HomeAssistant
 
 
 def test_openwb_base_entity() -> None:
@@ -311,9 +309,7 @@ async def test_async_setup_selects(hass: HomeAssistant) -> None:
 
     # Mock the entity class import and copy.deepcopy
     with (
-        patch(
-            "custom_components.openwb2mqtt.select.openwbSelect"
-        ) as mock_entity_class,
+        patch("custom_components.openwb2mqtt.select.openwbSelect") as mock_entity_class,
         patch(
             "custom_components.openwb2mqtt.common.copy.deepcopy",
             side_effect=lambda x: x,
@@ -382,9 +378,7 @@ async def test_async_setup_numbers(hass: HomeAssistant) -> None:
 
     # Mock the entity class import and copy.deepcopy
     with (
-        patch(
-            "custom_components.openwb2mqtt.number.openWBNumber"
-        ) as mock_entity_class,
+        patch("custom_components.openwb2mqtt.number.openWBNumber") as mock_entity_class,
         patch(
             "custom_components.openwb2mqtt.common.copy.deepcopy",
             side_effect=lambda x: x,

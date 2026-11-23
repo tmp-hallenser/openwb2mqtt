@@ -3,13 +3,11 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+)
 
-from homeassistant.components.mqtt.models import ReceiveMessage
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
 import homeassistant.components.mqtt as mqtt
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
 
 
 @pytest.fixture(autouse=True)

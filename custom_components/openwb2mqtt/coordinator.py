@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import json
 import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import slugify
 
 from .api_client import (
     OpenWB2MqttApiClient,

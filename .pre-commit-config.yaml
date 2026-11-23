@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+        # Formatting is enforced only on tests for now; the integration code is
+        # reformatted in a separate PR to keep functional diffs readable.
+        files: ^tests/

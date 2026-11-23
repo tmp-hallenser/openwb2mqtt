@@ -2,24 +2,12 @@
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from homeassistant.components import mqtt
-from homeassistant.components.mqtt.models import ReceiveMessage
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
-from homeassistant.const import (
-    ATTR_OPTION,
-    STATE_UNKNOWN,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.setup import async_setup_component
-
 from custom_components.openwb2mqtt.const import (
     DOMAIN,
-    SELECTS_PER_CHARGEPOINT,
     openwbDynamicSelectEntityDescription,
     openwbSelectEntityDescription,
 )
@@ -27,8 +15,12 @@ from custom_components.openwb2mqtt.select import (
     openwbDynamicSelect,
     openwbSelect,
 )
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
+from homeassistant.components.mqtt.models import ReceiveMessage
+from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
+from homeassistant.const import (
+    STATE_UNKNOWN,
+)
+from homeassistant.core import HomeAssistant
 
 
 async def test_select_setup(hass: HomeAssistant, mock_mqtt_subscribe) -> None:
@@ -535,11 +527,13 @@ async def test_dynamic_select_init(hass: HomeAssistant) -> None:
         },
         mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
         mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("instant_charging", {})
-        .get("limit", {})
-        .get("selected"),
+        value_fn=lambda x: (
+            json.loads(x)
+            .get("chargemode", {})
+            .get("instant_charging", {})
+            .get("limit", {})
+            .get("selected")
+        ),
     )
 
     # Create the dynamic select
@@ -592,11 +586,13 @@ async def test_dynamic_select_config_subscription(
         },
         mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
         mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("instant_charging", {})
-        .get("limit", {})
-        .get("selected"),
+        value_fn=lambda x: (
+            json.loads(x)
+            .get("chargemode", {})
+            .get("instant_charging", {})
+            .get("limit", {})
+            .get("selected")
+        ),
     )
 
     # Create the dynamic select
@@ -700,11 +696,13 @@ async def test_dynamic_select_current_value_subscription(
         },
         mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
         mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("instant_charging", {})
-        .get("limit", {})
-        .get("selected"),
+        value_fn=lambda x: (
+            json.loads(x)
+            .get("chargemode", {})
+            .get("instant_charging", {})
+            .get("limit", {})
+            .get("selected")
+        ),
     )
 
     # Create the dynamic select
@@ -810,11 +808,13 @@ async def test_dynamic_select_command(hass: HomeAssistant, mock_mqtt_publish) ->
         },
         mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
         mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("instant_charging", {})
-        .get("limit", {})
-        .get("selected"),
+        value_fn=lambda x: (
+            json.loads(x)
+            .get("chargemode", {})
+            .get("instant_charging", {})
+            .get("limit", {})
+            .get("selected")
+        ),
     )
 
     # Create the dynamic select
@@ -894,11 +894,13 @@ async def test_dynamic_select_cleanup(hass: HomeAssistant) -> None:
         },
         mqttTopicCommandTemplate="{mqtt_root}/set/vehicle/template/charge_template/{charge_template_id}/chargemode/instant_charging/limit/selected",
         mqttTopicCurrentValueTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("instant_charging", {})
-        .get("limit", {})
-        .get("selected"),
+        value_fn=lambda x: (
+            json.loads(x)
+            .get("chargemode", {})
+            .get("instant_charging", {})
+            .get("limit", {})
+            .get("selected")
+        ),
     )
 
     # Create the dynamic select
