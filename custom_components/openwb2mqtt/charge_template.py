@@ -31,6 +31,9 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# A key path into the template: str for dict keys, int for list indices.
+type TemplatePath = tuple[str | int, ...]
+
 # openWB publishes the template retained, so it normally arrives right after
 # subscribing. If it does not, the MQTT bridge most likely does not forward it.
 MISSING_TEMPLATE_TIMEOUT = 60
@@ -60,13 +63,21 @@ class ChargeTemplateManager:
         """Return the active charge template as last published by openWB."""
         return self._template
 
-    def get(self, path: tuple[str, ...]) -> Any:
-        """Return the value at ``path`` in the active template, or None."""
+    def get(self, path: TemplatePath) -> Any:
+        """Return the value at ``path`` in the active template, or None.
+
+        A ``str`` key looks up a dict entry, an ``int`` key a list index.
+        """
         value: Any = self._template
         for key in path:
-            if not isinstance(value, dict):
-                return None
-            value = value.get(key)
+            if isinstance(key, int):
+                if not isinstance(value, list) or not -len(value) <= key < len(value):
+                    return None
+                value = value[key]
+            else:
+                if not isinstance(value, dict):
+                    return None
+                value = value.get(key)
         return value
 
     @callback
@@ -155,25 +166,50 @@ class ChargeTemplateManager:
         for update_callback in list(self._listeners):
             update_callback()
 
-    async def async_set(self, path: tuple[str, ...], value: Any) -> None:
+    async def async_set(self, path: TemplatePath, value: Any) -> None:
         """Change one value of the template and publish the complete template."""
+        await self.async_set_many([(path, value)])
+
+    async def async_set_many(self, changes: list[tuple[TemplatePath, Any]]) -> None:
+        """Apply several changes to one copy of the template and publish it once.
+
+        Either all changes are applied or, if one path does not exist,
+        none and nothing is published.
+        """
         if self._working is None:
             raise HomeAssistantError(
                 f"No charge template received on {self.state_topic} yet"
             )
         template = copy.deepcopy(self._working)
-        node = template
-        for key in path[:-1]:
-            node = node.get(key)
-            if not isinstance(node, dict):
-                raise HomeAssistantError(
-                    f"Charge template has no '{'/'.join(path)}' entry"
-                )
-        if path[-1] not in node:
-            raise HomeAssistantError(f"Charge template has no '{'/'.join(path)}' entry")
-        node[path[-1]] = value
+        for path, value in changes:
+            _set_in(template, path, value)
         self._working = template
-        _LOGGER.debug("Publishing charge template %s=%s", "/".join(path), value)
+        _LOGGER.debug(
+            "Publishing charge template %s",
+            ", ".join(f"{_path_str(path)}={value}" for path, value in changes),
+        )
         await mqtt.async_publish(
             self.hass, self.command_topic, json.dumps(template), qos=1, retain=False
         )
+
+
+def _path_str(path: TemplatePath) -> str:
+    return "/".join(str(key) for key in path)
+
+
+def _set_in(template: dict[str, Any], path: TemplatePath, value: Any) -> None:
+    """Set ``value`` at an existing ``path``; raise if the path does not exist."""
+    node: Any = template
+    for depth, key in enumerate(path):
+        last = depth == len(path) - 1
+        if isinstance(key, int):
+            if not isinstance(node, list) or not -len(node) <= key < len(node):
+                raise HomeAssistantError(
+                    f"Charge template has no '{_path_str(path)}' entry"
+                )
+        elif not isinstance(node, dict) or key not in node:
+            raise HomeAssistantError(f"Charge template has no '{_path_str(path)}' entry")
+        if last:
+            node[key] = value
+        else:
+            node = node[key]

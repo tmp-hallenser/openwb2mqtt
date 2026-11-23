@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
+from custom_components.openwb2mqtt.charge_template import ChargeTemplateManager
 from custom_components.openwb2mqtt.const import (
     COMM_METHOD_MQTT,
     COMMUNICATION_METHOD,
@@ -51,8 +52,43 @@ SOC = "number.openwb_chargepoint_1_soc_limit_sofortladen"
 PREIS = "number.openwb_chargepoint_1_max_preis_strompreisbasiertes_laden"
 
 
-def charge_template(template_id: int = 1) -> dict[str, Any]:
-    """Return a charge template with openWB core 2.3 default values."""
+def scheduled_plan(**changes: Any) -> dict[str, Any]:
+    """Return a target charging plan as published by openWB 2.3.0."""
+    plan = {
+        "active": False,
+        "bidi_charging_enabled": False,
+        "bidi_power": 10000,
+        "current": 14,
+        "dc_current": 145,
+        "et_active": False,
+        "frequency": {
+            "selected": "once",
+            "once": "2026-05-24",
+            "weekly": [False] * 7,
+        },
+        "id": 0,
+        "name": "neuer Zielladen-Plan",
+        "limit": {
+            "selected": "amount",
+            "amount": 1000,
+            "soc_limit": 90,
+            "soc_scheduled": 80,
+        },
+        "phases_to_use": 0,
+        "phases_to_use_pv": 0,
+        "time": "07:00",
+    }
+    plan.update(changes)
+    return plan
+
+
+def charge_template(
+    template_id: int = 1, plans: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Return a charge template with openWB core 2.3 default values.
+
+    By default it contains one (inactive) target charging plan.
+    """
     limit = {"selected": "none", "amount": 50000, "soc": 50}
     return {
         "id": template_id,
@@ -78,7 +114,9 @@ def charge_template(template_id: int = 1) -> dict[str, Any]:
                 "phases_to_use": 0,
                 "phases_to_use_min_soc": 3,
             },
-            "scheduled_charging": {"plans": []},
+            "scheduled_charging": {
+                "plans": [scheduled_plan()] if plans is None else plans
+            },
             "instant_charging": {
                 "current": 16,
                 "dc_current": 145,
@@ -571,3 +609,100 @@ async def test_pv_and_eco_numbers(
         node = node[key]
     assert node == expected
     assert isinstance(node, int)
+
+
+PLAN = ("chargemode", "scheduled_charging", "plans", 0)
+
+
+def _manager(hass: HomeAssistant) -> ChargeTemplateManager:
+    return hass.config_entries.async_entries(DOMAIN)[0].runtime_data.charge_template
+
+
+async def test_manager_list_index_paths(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """Int keys index lists, for reading and writing."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    manager = _manager(hass)
+
+    assert manager.get((*PLAN, "time")) == "07:00"
+    assert manager.get((*PLAN, "frequency", "weekly", 6)) is False
+    assert manager.get(("chargemode", "scheduled_charging", "plans", 1)) is None
+    assert manager.get(("chargemode", "selected", 0)) is None
+
+    await manager.async_set((*PLAN, "limit", "soc_scheduled"), 70)
+    (published,) = _published_templates(mqtt_mock)
+    expected = charge_template()
+    expected["chargemode"]["scheduled_charging"]["plans"][0]["limit"][
+        "soc_scheduled"
+    ] = 70
+    assert published == expected
+
+
+async def test_manager_missing_list_index_publishes_nothing(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """A missing plan raises and nothing is published, even in a batch."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template(plans=[]))
+    await hass.async_block_till_done()
+    manager = _manager(hass)
+
+    with pytest.raises(HomeAssistantError):
+        await manager.async_set((*PLAN, "active"), True)
+    with pytest.raises(HomeAssistantError):
+        await manager.async_set_many(
+            [(("chargemode", "selected"), "pv_charging"), ((*PLAN, "active"), True)]
+        )
+    assert _published_templates(mqtt_mock) == []
+    # The failed batch did not change the base for the next change.
+    await manager.async_set(("chargemode", "selected"), "stop")
+    (published,) = _published_templates(mqtt_mock)
+    assert published == {
+        **charge_template(plans=[]),
+        "chargemode": {**charge_template(plans=[])["chargemode"], "selected": "stop"},
+    }
+
+
+async def test_manager_set_many_publishes_once(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """async_set_many publishes exactly one template with all changes."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+
+    await _manager(hass).async_set_many(
+        [
+            ((*PLAN, "frequency", "selected"), "once"),
+            ((*PLAN, "frequency", "once"), "2026-12-01"),
+            ((*PLAN, "time"), "06:30"),
+        ]
+    )
+    (published,) = _published_templates(mqtt_mock)
+    plan = published["chargemode"]["scheduled_charging"]["plans"][0]
+    assert plan["frequency"]["once"] == "2026-12-01"
+    assert plan["time"] == "06:30"
+    assert plan == scheduled_plan(
+        frequency={"selected": "once", "once": "2026-12-01", "weekly": [False] * 7},
+        time="06:30",
+    )
+
+
+async def test_manager_quick_list_changes_are_combined(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """A second plan change before openWB echoes the first keeps the first."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    manager = _manager(hass)
+
+    await manager.async_set((*PLAN, "active"), True)
+    await manager.async_set((*PLAN, "limit", "soc_limit"), 95)
+    _, second = _published_templates(mqtt_mock)
+    plan = second["chargemode"]["scheduled_charging"]["plans"][0]
+    assert plan["active"] is True
+    assert plan["limit"]["soc_limit"] == 95
