@@ -207,7 +207,7 @@ async def test_openwb_select_init(hass: HomeAssistant) -> None:
     assert select.name == "Charge Mode"
     assert select.unique_id == "test_unique_id_charge_mode"
     assert select.device_info["name"] == "Test Device"
-    assert select.device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
+    assert select.device_info["identifiers"] == {(DOMAIN, "openWB-Test Device")}
     assert select.options == ["Instant Charging", "PV Charging", "Stop"]
     assert select.deviceID == 1
 
