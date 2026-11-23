@@ -7,6 +7,8 @@ import copy
 import logging
 from typing import Any, TypeVar
 
+from homeassistant.components import mqtt
+from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, Entity
@@ -42,6 +44,21 @@ class OpenWBBaseEntity:
             identifiers={(DOMAIN, self.device_friendly_name, self.mqtt_root)},
             manufacturer=MANUFACTURER,
             model=MODEL,
+        )
+
+    async def async_subscribe_topic(
+        self,
+        topic: str,
+        msg_callback: Callable[[ReceiveMessage], None],
+        qos: int = 1,
+    ) -> None:
+        """Subscribe to an MQTT topic for the lifetime of this entity.
+
+        The subscription is removed automatically when the entity is removed,
+        for example when the config entry is reloaded after an options change.
+        """
+        self.async_on_remove(
+            await mqtt.async_subscribe(self.hass, topic, msg_callback, qos)
         )
 
 

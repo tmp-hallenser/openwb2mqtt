@@ -151,7 +151,9 @@ async def test_number_set_value(hass: HomeAssistant) -> None:
     number.entity_id = f"{NUMBER_DOMAIN}.test_number"
 
     # Mock MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Call async_set_native_value method
         await number.async_set_native_value(20)
 
@@ -290,7 +292,9 @@ async def test_number_publish_to_mqtt(hass: HomeAssistant) -> None:
     to the MQTT broker when the user changes the number value.
     """
     # Mock the MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Create a number description
         description = openWBNumberEntityDescription(
             key="max_current",
@@ -315,7 +319,7 @@ async def test_number_publish_to_mqtt(hass: HomeAssistant) -> None:
         number.hass = hass
 
         # Call publishToMQTT method
-        result = number.publishToMQTT(20)
+        result = await number.publishToMQTT(20)
 
         # Verify MQTT message was published
         assert result is True
@@ -481,7 +485,9 @@ async def test_dynamic_number_set_value(hass: HomeAssistant) -> None:
     the associated device through MQTT using dynamically constructed topics.
     """
     # Mock the MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Create a dynamic number description
         description = openwbDynamicNumberEntityDescription(
             key="pv_charging_current",
@@ -539,7 +545,9 @@ async def test_dynamic_number_no_template_id(hass: HomeAssistant) -> None:
     test ensures it behaves correctly before that data is received.
     """
     # Mock the MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Create a dynamic number description
         description = openwbDynamicNumberEntityDescription(
             key="pv_charging_current",
@@ -608,13 +616,15 @@ async def test_number_with_special_soc_topic(hass: HomeAssistant) -> None:
     number.hass = hass
 
     # Mock MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Mock the get_assigned_vehicle method to return a specific vehicle ID
         with patch.object(
             number, "get_assigned_vehicle", return_value="2"
         ) as mock_get_assigned_vehicle:
             # Call publishToMQTT method
-            result = number.publishToMQTT(80)
+            result = await number.publishToMQTT(80)
 
             # Verify MQTT message was published with the correct vehicle ID
             assert result is True

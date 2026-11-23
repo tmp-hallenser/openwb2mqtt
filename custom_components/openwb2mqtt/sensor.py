@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -279,11 +278,6 @@ class openwbSensor(OpenWBBaseEntity, SensorEntity):
         def message_received(message):
             """Handle new MQTT messages."""
             self._attr_native_value = message.payload
-            device_registry = dr.async_get(self.hass)
-            device = self.device_entry
-
-            if device is None:
-                return
 
             if self.entity_description.value_fn is not None:
                 self._attr_native_value = self.entity_description.value_fn(
@@ -298,33 +292,7 @@ class openwbSensor(OpenWBBaseEntity, SensorEntity):
                     self._attr_native_value = self.entity_description.valueMap.get(
                         self._attr_native_value, self._attr_native_value
                     )
-            if "ip_adress" in self.entity_id:
-                device_registry.async_update_device(
-                    device.id,
-                    configuration_url=f"http://{message.payload.strip('\"')}"
-                )
-            if "version" in self.entity_id:
-                device_registry.async_update_device(
-                    device.id, sw_version=message.payload.strip('"')
-                )
-            if (
-                self.entity_description.key == "name"
-                and "vehicle" in self.entity_description.mqttTopicCurrentValue
-            ):
-                device_registry.async_update_device(
-                    device.id, name=message.payload.strip('"')
-                )
-            if "ladepunkt" in self.entity_id:
-                try:
-                    chargepointInfo = json.loads(message.payload)
-                    chargepointName = chargepointInfo.get("name")
-                    if chargepointName is not None:
-                        device_registry.async_update_device(
-                            device.id,
-                            name=chargepointName,
-                        )
-                except json.JSONDecodeError:
-                    pass
+            self._update_device_registry(message.payload)
             if "phases_in_use" in self.entity_description.key:
                 try:
                     phases = int(message.payload)
@@ -340,16 +308,41 @@ class openwbSensor(OpenWBBaseEntity, SensorEntity):
                     pass
             self.async_write_ha_state()
 
-        await mqtt.async_subscribe(
-            self.hass,
-            self.entity_description.mqttTopicCurrentValue,
-            message_received,
-            1,
+        await self.async_subscribe_topic(
+            self.entity_description.mqttTopicCurrentValue, message_received
         )
         _LOGGER.debug(
             "Subscribed to MQTT topic: %s",
             self.entity_description.mqttTopicCurrentValue,
         )
+
+    @callback
+    def _update_device_registry(self, payload: str) -> None:
+        """Copy device details published by openWB into the device registry."""
+        device = self.device_entry
+        if device is None:
+            return
+        device_registry = dr.async_get(self.hass)
+        if "ip_adress" in self.entity_id:
+            device_registry.async_update_device(
+                device.id, configuration_url=f"http://{payload.strip('\"')}"
+            )
+        if "version" in self.entity_id:
+            device_registry.async_update_device(
+                device.id, sw_version=payload.strip('"')
+            )
+        if (
+            self.entity_description.key == "name"
+            and "vehicle" in self.entity_description.mqttTopicCurrentValue
+        ):
+            device_registry.async_update_device(device.id, name=payload.strip('"'))
+        if "ladepunkt" in self.entity_id:
+            try:
+                chargepoint_name = json.loads(payload).get("name")
+            except (json.JSONDecodeError, AttributeError):
+                return
+            if chargepoint_name is not None:
+                device_registry.async_update_device(device.id, name=chargepoint_name)
 
 
 class openwbDynamicSensor(OpenWBBaseEntity, SensorEntity):
@@ -378,7 +371,6 @@ class openwbDynamicSensor(OpenWBBaseEntity, SensorEntity):
         self.mqtt_root = mqtt_root
         self.device_id = device_id
         self._charge_template_id = None
-        self._unsubscribe_config = None
         self._unsubscribe_template = None
 
     async def async_added_to_hass(self):
@@ -405,16 +397,13 @@ class openwbDynamicSensor(OpenWBBaseEntity, SensorEntity):
                     self._charge_template_id = new_charge_template_id
 
                     # Update the subscription to the charge template topic
-                    asyncio.create_task(self._update_template_subscription())
+                    self.hass.async_create_task(
+                        self._update_template_subscription()
+                    )
             except (json.JSONDecodeError, ValueError) as err:
                 _LOGGER.error("Error parsing config message: %s", err)
 
-        self._unsubscribe_config = await mqtt.async_subscribe(
-            self.hass,
-            config_topic,
-            config_message_received,
-            1,
-        )
+        await self.async_subscribe_topic(config_topic, config_message_received)
         _LOGGER.debug("Subscribed to config MQTT topic: %s", config_topic)
 
     async def _update_template_subscription(self):
@@ -473,9 +462,7 @@ class openwbDynamicSensor(OpenWBBaseEntity, SensorEntity):
         _LOGGER.debug("Subscribed to template MQTT topic: %s", template_topic)
 
     async def async_will_remove_from_hass(self):
-        """Unsubscribe from MQTT when entity is removed."""
-        if self._unsubscribe_config is not None:
-            self._unsubscribe_config()
-
+        """Unsubscribe from the charge template topic when entity is removed."""
         if self._unsubscribe_template is not None:
             self._unsubscribe_template()
+            self._unsubscribe_template = None

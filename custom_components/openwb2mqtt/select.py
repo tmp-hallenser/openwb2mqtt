@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -324,33 +323,25 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
 
         # Subscribe to MQTT topic and connect callback message
         if self.entity_description.mqttTopicCurrentValue is not None:
-            await mqtt.async_subscribe(
-                self.hass,
-                self.entity_description.mqttTopicCurrentValue,
-                message_received,
-                1,
+            await self.async_subscribe_topic(
+                self.entity_description.mqttTopicCurrentValue, message_received
             )
 
         # Subscribe to MQTT topic options and connect callback message
         if self.entity_description.mqttTopicOptions is not None:
             for option in self.entity_description.mqttTopicOptions:
-                await mqtt.async_subscribe(
-                    self.hass,
-                    option,
-                    option_received,
-                    1,
-                )
+                await self.async_subscribe_topic(option, option_received)
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        success = self.publishToMQTT(option)
+        success = await self.publishToMQTT(option)
         if success:
             # self._attr_current_option = option
             # self.async_write_ha_state()
             return
         _LOGGER.error("Error publishing MQTT message")
 
-    def publishToMQTT(self, commandValueToPublish) -> bool:
+    async def publishToMQTT(self, commandValueToPublish) -> bool:
         """Publish message to MQTT.
 
         If defined, you can remap the value in HA to the value that is required by the integration.
@@ -387,7 +378,7 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
             publish_mqtt_message = True
 
         if publish_mqtt_message:
-            mqtt.publish(self.hass, topic, payload, 0, False)
+            await mqtt.async_publish(self.hass, topic, payload, 0, False)
 
         return publish_mqtt_message
 
@@ -450,7 +441,6 @@ class openwbDynamicSelect(OpenWBBaseEntity, SelectEntity):
         self.deviceID = deviceID
         self.mqtt_root = mqtt_root
         self._charge_template_id = None
-        self._unsubscribe_config = None
         self._unsubscribe_current_value = None
 
     @property
@@ -486,16 +476,13 @@ class openwbDynamicSelect(OpenWBBaseEntity, SelectEntity):
                     self._charge_template_id = new_charge_template_id
 
                     # Update the subscription to the current value topic
-                    asyncio.create_task(self._update_current_value_subscription())
+                    self.hass.async_create_task(
+                        self._update_current_value_subscription()
+                    )
             except (json.JSONDecodeError, ValueError) as err:
                 _LOGGER.error("Error parsing config message: %s", err)
 
-        self._unsubscribe_config = await mqtt.async_subscribe(
-            self.hass,
-            config_topic,
-            config_message_received,
-            1,
-        )
+        await self.async_subscribe_topic(config_topic, config_message_received)
         _LOGGER.debug("Subscribed to config MQTT topic: %s", config_topic)
 
     async def _update_current_value_subscription(self):
@@ -560,12 +547,12 @@ class openwbDynamicSelect(OpenWBBaseEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        success = self.publishToMQTT(option)
+        success = await self.publishToMQTT(option)
         if success:
             return
         _LOGGER.error("Error publishing MQTT message")
 
-    def publishToMQTT(self, commandValueToPublish) -> bool:
+    async def publishToMQTT(self, commandValueToPublish) -> bool:
         """Publish message to MQTT.
 
         If defined, you can remap the value in HA to the value that is required by the integration.
@@ -600,14 +587,12 @@ class openwbDynamicSelect(OpenWBBaseEntity, SelectEntity):
             publish_mqtt_message = True
 
         if publish_mqtt_message:
-            mqtt.publish(self.hass, topic, payload, 0, False)
+            await mqtt.async_publish(self.hass, topic, payload, 0, False)
 
         return publish_mqtt_message
 
     async def async_will_remove_from_hass(self):
-        """Unsubscribe from MQTT when entity is removed."""
-        if self._unsubscribe_config is not None:
-            self._unsubscribe_config()
-
+        """Unsubscribe from the current value topic when entity is removed."""
         if self._unsubscribe_current_value is not None:
             self._unsubscribe_current_value()
+            self._unsubscribe_current_value = None

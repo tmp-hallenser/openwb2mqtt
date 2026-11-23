@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -254,11 +253,8 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
             "Subscribed to MQTT topic: %s",
             self.entity_description.mqttTopicCurrentValue,
         )
-        await mqtt.async_subscribe(
-            self.hass,
-            self.entity_description.mqttTopicCurrentValue,
-            message_received,
-            1,
+        await self.async_subscribe_topic(
+            self.entity_description.mqttTopicCurrentValue, message_received
         )
 
     async def async_set_native_value(self, value):
@@ -269,17 +265,17 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
         Only then, openWB has changed the setting as well.
         """
         if slugify("Ladestromvorgabe (PV Laden)") in self.entity_id:
-            success = self.publishToMQTT(int(value))
+            success = await self.publishToMQTT(int(value))
             if success:
                 self._attr_native_value = value
                 self.async_write_ha_state()
         else:
-            success = self.publishToMQTT(value)
+            success = await self.publishToMQTT(value)
         if success:
             return
         _LOGGER.error("Error publishing MQTT message")
 
-    def publishToMQTT(self, valueToPublish: float) -> bool:
+    async def publishToMQTT(self, valueToPublish: float) -> bool:
         """Publish message to MQTT.
 
         If necessary, placeholders in MQTT topic are replaced.
@@ -305,7 +301,7 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
 
         if publish_mqtt_message:
             # Use the modified topic with replaced placeholders
-            mqtt.publish(self.hass, topic, payload)
+            await mqtt.async_publish(self.hass, topic, payload)
 
         return publish_mqtt_message
 
@@ -362,7 +358,6 @@ class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
         self.mqtt_root = mqtt_root
         self.device_id = device_id
         self._charge_template_id = None
-        self._unsubscribe_config = None
         self._unsubscribe_template = None
 
         # Set native min/max/step values from the entity description
@@ -406,16 +401,13 @@ class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
                     self._charge_template_id = new_charge_template_id
 
                     # Update the subscription to the charge template topic
-                    asyncio.create_task(self._update_template_subscription())
+                    self.hass.async_create_task(
+                        self._update_template_subscription()
+                    )
             except (json.JSONDecodeError, ValueError) as err:
                 _LOGGER.error("Error parsing config message: %s", err)
 
-        self._unsubscribe_config = await mqtt.async_subscribe(
-            self.hass,
-            config_topic,
-            config_message_received,
-            1,
-        )
+        await self.async_subscribe_topic(config_topic, config_message_received)
         _LOGGER.debug("Subscribed to config MQTT topic: %s", config_topic)
 
     async def _update_template_subscription(self):
@@ -464,12 +456,10 @@ class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
         _LOGGER.debug("Subscribed to template MQTT topic: %s", template_topic)
 
     async def async_will_remove_from_hass(self):
-        """Unsubscribe from MQTT when entity is removed."""
-        if self._unsubscribe_config is not None:
-            self._unsubscribe_config()
-
+        """Unsubscribe from the charge template topic when entity is removed."""
         if self._unsubscribe_template is not None:
             self._unsubscribe_template()
+            self._unsubscribe_template = None
 
     async def async_set_native_value(self, value):
         """Update the current value.
@@ -497,4 +487,4 @@ class openwbDynamicNumber(OpenWBBaseEntity, NumberEntity):
         payload = str(int(value))
 
         _LOGGER.debug("Publishing to MQTT topic %s: %s", command_topic, payload)
-        mqtt.publish(self.hass, command_topic, payload)
+        await mqtt.async_publish(self.hass, command_topic, payload)

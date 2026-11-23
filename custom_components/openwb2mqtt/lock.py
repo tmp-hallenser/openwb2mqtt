@@ -140,9 +140,7 @@ class OpenWbMqttLock(OpenWBBaseEntity, LockEntity):
             self.async_write_ha_state()
 
         if self._state_topic:
-            await mqtt.async_subscribe(
-                self.hass, self._state_topic, message_received, 1
-            )
+            await self.async_subscribe_topic(self._state_topic, message_received)
             _LOGGER.debug("Subscribed to lock state MQTT topic: %s", self._state_topic)
 
     async def async_lock(self, **kwargs) -> None:
@@ -156,11 +154,6 @@ class OpenWbMqttLock(OpenWBBaseEntity, LockEntity):
         if self._command_topic:
             payload = self.entity_description.payload_unlock
             await mqtt.async_publish(self.hass, self._command_topic, payload, 0, False)
-
-    async def async_will_remove_from_hass(self):
-        """Unsubscribe from MQTT when entity is removed."""
-        if hasattr(self, "_unsubscribe_state") and self._unsubscribe_state:
-            self._unsubscribe_state()
 
 
 class OpenWbApiLock(CoordinatorEntity[OpenWB2MqttDataUpdateCoordinator], LockEntity):

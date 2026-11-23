@@ -2,7 +2,7 @@
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -154,7 +154,9 @@ async def test_select_command(hass: HomeAssistant, mock_mqtt_publish) -> None:
     select.hass = hass
 
     # Mock MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Call select_option method
         await select.async_select_option("Vehicle 1")
 
@@ -368,7 +370,9 @@ async def test_select_command_with_mapping(
     select.hass = hass
 
     # Mock MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Call select_option method
         await select.async_select_option("Instant Charging")
 
@@ -459,7 +463,9 @@ async def test_select_with_dynamic_command_topic(
         callback = mock_mqtt_subscribe.call_args[0][2]
 
     # Mock the MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         with patch.object(select, "async_added_to_hass", mock_async_added_to_hass):
             # Call async_added_to_hass to register the callback
             await select.async_added_to_hass()
@@ -554,7 +560,6 @@ async def test_dynamic_select_init(hass: HomeAssistant) -> None:
     assert select.deviceID == 1
     assert select.mqtt_root == "openWB"
     assert select._charge_template_id is None
-    assert select._unsubscribe_config is None
     assert select._unsubscribe_current_value is None
 
 
@@ -833,7 +838,9 @@ async def test_dynamic_select_command(hass: HomeAssistant, mock_mqtt_publish) ->
     select._charge_template_id = 789
 
     # Mock MQTT publish
-    with patch("homeassistant.components.mqtt.publish") as mock_publish:
+    with patch(
+        "homeassistant.components.mqtt.async_publish", new_callable=AsyncMock
+    ) as mock_publish:
         # Call select_option method
         await select.async_select_option("EV-SoC")
 
@@ -915,17 +922,21 @@ async def test_dynamic_select_cleanup(hass: HomeAssistant) -> None:
     # Add the select to hass
     select.hass = hass
 
-    # Create mock unsubscribe functions
+    # The charge template subscription changes at runtime and is released
+    # explicitly; the config topic subscription is released by
+    # async_subscribe_topic's async_on_remove callback.
     unsubscribe_config_mock = MagicMock()
     unsubscribe_current_value_mock = MagicMock()
-
-    # Set the unsubscribe functions
-    select._unsubscribe_config = unsubscribe_config_mock
+    with patch(
+        "homeassistant.components.mqtt.async_subscribe",
+        AsyncMock(return_value=unsubscribe_config_mock),
+    ):
+        await select.async_subscribe_topic("openWB/some/topic", MagicMock())
     select._unsubscribe_current_value = unsubscribe_current_value_mock
 
-    # Call async_will_remove_from_hass
     await select.async_will_remove_from_hass()
-
-    # Verify both unsubscribe functions were called
-    unsubscribe_config_mock.assert_called_once()
     unsubscribe_current_value_mock.assert_called_once()
+    assert select._unsubscribe_current_value is None
+
+    select._call_on_remove_callbacks()
+    unsubscribe_config_mock.assert_called_once()
