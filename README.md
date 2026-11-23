@@ -181,4 +181,8 @@ The tests use [pytest-homeassistant-custom-component](https://github.com/Matthew
 uv venv --python 3.14 .venv
 uv pip install --python .venv -r requirements_test.txt
 .venv/bin/pytest
+.venv/bin/ruff check .
+.venv/bin/pre-commit install   # optional: run ruff before every commit
 ```
+
+The same checks run in GitHub Actions on every push and pull request.
