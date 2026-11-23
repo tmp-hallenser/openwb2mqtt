@@ -237,13 +237,46 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
         self._attr_current_option = None
         self.deviceID = deviceID
         self.mqtt_root = mqtt_root
+        # For selects with option topics (connected vehicle): vehicle names
+        # published by openWB, by vehicle ID, and the last received value.
+        self._option_names: dict[int, str] = {}
+        self._raw_value = None
 
     @property
     def options(self) -> list[str]:
-        """Return a set of selectable options."""
+        """Return a set of selectable options.
+
+        Once openWB has published vehicle names, only those vehicles are
+        offered instead of the fixed placeholder slots.
+        """
+        if self._option_names:
+            options = [self._option_names[i] for i in sorted(self._option_names)]
+            if self._attr_current_option not in (None, *options):
+                options.append(self._attr_current_option)
+            return options
         if self.entity_description.options is not None:
             return self.entity_description.options
         return []
+
+    @callback
+    def _update_current_option(self) -> None:
+        """Map the last received value to an option."""
+        payload = self._raw_value
+        if payload is None:
+            self._attr_current_option = None
+            return
+        try:
+            key = int(payload)
+        except (ValueError, TypeError):
+            key = payload
+        if key in self._option_names:
+            self._attr_current_option = self._option_names[key]
+        elif self.entity_description.valueMapCurrentValue is not None:
+            self._attr_current_option = self.entity_description.valueMapCurrentValue.get(
+                key, self.entity_description.valueMapCurrentValue.get(payload)
+            )
+        else:
+            self._attr_current_option = payload
 
     async def async_added_to_hass(self):
         """Subscribe to MQTT events."""
@@ -258,21 +291,8 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
             # Convert data if a conversion function is defined
             if self.entity_description.value_fn is not None:
                 payload = self.entity_description.value_fn(payload)
-            # Map values as defined in the value map dict.
-            # First try to map integer values, then string values.
-            # If no value can be mapped, use original value without conversion.
-            if self.entity_description.valueMapCurrentValue is not None:
-                try:
-                    self._attr_current_option = (
-                        self.entity_description.valueMapCurrentValue.get(int(payload))
-                    )
-                except ValueError:
-                    self._attr_current_option = (
-                        self.entity_description.valueMapCurrentValue.get(payload, None)
-                    )
-            else:
-                self._attr_current_option = payload
-
+            self._raw_value = payload
+            self._update_current_option()
             self.async_write_ha_state()
 
         @callback
@@ -280,39 +300,17 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
             """Handle new MQTT messages for vehicle names."""
             try:
                 vehicle_id = int(message.topic.split("/")[-2])
-                payload = str(message.payload).strip().strip('"')
-
-                if not payload:
-                    return
-
-                options = list(self.entity_description.options or [])
-                if vehicle_id >= len(options):
-                    return
-
-                options[vehicle_id] = payload
-                self.entity_description.options = options
-
-                if self.entity_description.valueMapCurrentValue is not None:
-                    self.entity_description.valueMapCurrentValue[vehicle_id] = payload
-
-                if self.entity_description.valueMapCommand is not None:
-                    for key, value in list(
-                        self.entity_description.valueMapCommand.items()
-                    ):
-                        if str(value) == str(vehicle_id):
-                            del self.entity_description.valueMapCommand[key]
-
-                    self.entity_description.valueMapCommand[payload] = str(vehicle_id)
-
+                name = str(message.payload).strip().strip('"')
+                if name:
+                    self._option_names[vehicle_id] = name
+                else:
+                    # Empty retained payload: vehicle deleted in openWB.
+                    self._option_names.pop(vehicle_id, None)
+                self._update_current_option()
                 self.async_write_ha_state()
-
                 _LOGGER.debug(
-                    "Updated vehicle %s name to %s from MQTT topic %s",
-                    vehicle_id,
-                    payload,
-                    message.topic,
+                    "Vehicle %s is named %r (from %s)", vehicle_id, name, message.topic
                 )
-
             except (ValueError, TypeError, IndexError) as err:
                 _LOGGER.warning(
                     "Unable to process vehicle name from MQTT topic %s: %s",
@@ -353,8 +351,13 @@ class openwbSelect(OpenWBBaseEntity, SelectEntity):
 
         _LOGGER.debug("MQTT topic: %s", topic)
 
+        # Vehicle names published by openWB map to their vehicle ID.
+        names_to_ids = {name: str(i) for i, name in self._option_names.items()}
+        if commandValueToPublish in names_to_ids:
+            payload = names_to_ids[commandValueToPublish]
+            publish_mqtt_message = True
         # Modify commandValueToPublish if mapping table is defined
-        if self.entity_description.valueMapCommand is not None:
+        elif self.entity_description.valueMapCommand is not None:
             try:
                 payload = self.entity_description.valueMapCommand.get(
                     commandValueToPublish
