@@ -2,36 +2,29 @@
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
-
-from homeassistant.components import mqtt
-from homeassistant.components.mqtt.models import ReceiveMessage
-from homeassistant.components.number import (
-    DOMAIN as NUMBER_DOMAIN,
-    NumberMode,
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
 )
-from homeassistant.const import (
-    ATTR_MODE,
-    STATE_UNKNOWN,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.setup import async_setup_component
 
 from custom_components.openwb2mqtt.const import (
     DOMAIN,
-    NUMBERS_PER_CHARGEPOINT,
-    openWBNumberEntityDescription,
     openwbDynamicNumberEntityDescription,
+    openWBNumberEntityDescription,
 )
 from custom_components.openwb2mqtt.number import (
-    openWBNumber,
     openwbDynamicNumber,
+    openWBNumber,
 )
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_mqtt_message
+from homeassistant.components.mqtt.models import ReceiveMessage
+from homeassistant.components.number import (
+    DOMAIN as NUMBER_DOMAIN,
+)
+from homeassistant.const import (
+    STATE_UNKNOWN,
+)
+from homeassistant.core import HomeAssistant
 
 
 async def test_number_setup(hass: HomeAssistant, mock_mqtt_subscribe) -> None:
@@ -331,7 +324,6 @@ async def test_number_publish_to_mqtt(hass: HomeAssistant) -> None:
         )
 
 
-@pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
 async def test_dynamic_number_init(hass: HomeAssistant) -> None:
     """Test initialization of openwbDynamicNumber.
 
@@ -352,14 +344,14 @@ async def test_dynamic_number_init(hass: HomeAssistant) -> None:
         native_min_value=6,
         native_max_value=32,
         native_step=1,
-        value_fn=lambda x: json.loads(x)
-        .get("chargemode", {})
-        .get("pv_charging", {})
-        .get("current"),
+        value_fn=lambda x: (
+            json.loads(x).get("chargemode", {}).get("pv_charging", {}).get("current")
+        ),
     )
 
     # Create the number
     number = openwbDynamicNumber(
+        config_entry=MockConfigEntry(domain=DOMAIN),
         uniqueID="test_unique_id",
         description=description,
         device_friendly_name="Test Device",
@@ -380,7 +372,6 @@ async def test_dynamic_number_init(hass: HomeAssistant) -> None:
     assert number.device_id == 1
 
 
-@pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
 async def test_dynamic_number_subscription_update(hass: HomeAssistant) -> None:
     """Test updating subscriptions in dynamic number.
 
@@ -406,14 +397,17 @@ async def test_dynamic_number_subscription_update(hass: HomeAssistant) -> None:
             native_min_value=6,
             native_max_value=32,
             native_step=1,
-            value_fn=lambda x: json.loads(x)
-            .get("chargemode", {})
-            .get("pv_charging", {})
-            .get("current"),
+            value_fn=lambda x: (
+                json.loads(x)
+                .get("chargemode", {})
+                .get("pv_charging", {})
+                .get("current")
+            ),
         )
 
         # Create the number
         number = openwbDynamicNumber(
+            config_entry=MockConfigEntry(domain=DOMAIN),
             uniqueID="test_unique_id",
             description=description,
             device_friendly_name="Test Device",
@@ -474,7 +468,6 @@ async def test_dynamic_number_subscription_update(hass: HomeAssistant) -> None:
         assert number._attr_native_value == 16
 
 
-@pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
 async def test_dynamic_number_set_value(hass: HomeAssistant) -> None:
     """Test setting values for dynamic number.
 
@@ -498,14 +491,17 @@ async def test_dynamic_number_set_value(hass: HomeAssistant) -> None:
             native_min_value=6,
             native_max_value=32,
             native_step=1,
-            value_fn=lambda x: json.loads(x)
-            .get("chargemode", {})
-            .get("pv_charging", {})
-            .get("current"),
+            value_fn=lambda x: (
+                json.loads(x)
+                .get("chargemode", {})
+                .get("pv_charging", {})
+                .get("current")
+            ),
         )
 
         # Create the number
         number = openwbDynamicNumber(
+            config_entry=MockConfigEntry(domain=DOMAIN),
             uniqueID="test_unique_id",
             description=description,
             device_friendly_name="Test Device",
@@ -530,7 +526,6 @@ async def test_dynamic_number_set_value(hass: HomeAssistant) -> None:
         )
 
 
-@pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
 async def test_dynamic_number_no_template_id(hass: HomeAssistant) -> None:
     """Test setting values for dynamic number without template ID.
 
@@ -558,6 +553,7 @@ async def test_dynamic_number_no_template_id(hass: HomeAssistant) -> None:
 
         # Create the number
         number = openwbDynamicNumber(
+            config_entry=MockConfigEntry(domain=DOMAIN),
             uniqueID="test_unique_id",
             description=description,
             device_friendly_name="Test Device",

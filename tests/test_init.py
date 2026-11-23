@@ -1,71 +1,86 @@
-"""Tests for the openwb2mqtt integration."""
+"""Tests for setting up and unloading the openwb2mqtt integration."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.config_entries import ConfigEntry
+from custom_components.openwb2mqtt import async_setup_entry, async_unload_entry
+from custom_components.openwb2mqtt.const import (
+    API_PREFIX,
+    API_URL,
+    COMM_METHOD_HTTP,
+    COMM_METHOD_MQTT,
+    COMMUNICATION_METHOD,
+    DEVICEID,
+    DEVICETYPE,
+    DOMAIN,
+    MQTT_ROOT_TOPIC,
+    PLATFORMS,
+)
+from custom_components.openwb2mqtt.coordinator import (
+    OpenWB2MqttDataUpdateCoordinator,
+)
 from homeassistant.core import HomeAssistant
 
-from custom_components.openwb2mqtt import (
-    async_setup_entry,
-    async_unload_entry,
-)
-from custom_components.openwb2mqtt.const import PLATFORMS
 
-pytestmark = pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
+async def test_setup_and_unload_mqtt_entry(hass: HomeAssistant) -> None:
+    """An MQTT entry forwards all platforms and unloads them again."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            COMMUNICATION_METHOD: COMM_METHOD_MQTT,
+            MQTT_ROOT_TOPIC: "openWB",
+            DEVICETYPE: "pv",
+            DEVICEID: 2,
+        },
+    )
+    entry.add_to_hass(hass)
 
-
-async def test_setup_entry(hass: HomeAssistant) -> None:
-    """Test setting up the integration.
-
-    This test verifies that the async_setup_entry function correctly:
-    1. Forwards the config entry to all supported platforms
-    2. Returns True on successful setup
-
-    The async_setup_entry function is the main entry point for setting up
-    the integration when a config entry is loaded, so it's critical that
-    it properly initializes all platforms.
-    """
-    # Create a mock config entry
-    entry = MagicMock(spec=ConfigEntry)
-
-    # Mock the async_forward_entry_setups method
     with patch.object(
         hass.config_entries, "async_forward_entry_setups", return_value=True
     ) as mock_forward:
-        # Call the setup function
-        result = await async_setup_entry(hass, entry)
+        assert await async_setup_entry(hass, entry) is True
+    mock_forward.assert_called_once_with(entry, PLATFORMS)
+    assert entry.entry_id not in hass.data[DOMAIN]
 
-        # Verify the result
-        assert result is True
-
-        # Verify the platforms were set up
-        mock_forward.assert_called_once_with(entry, PLATFORMS)
-
-
-async def test_unload_entry(hass: HomeAssistant) -> None:
-    """Test unloading the integration.
-
-    This test verifies that the async_unload_entry function correctly:
-    1. Unloads all platforms that were set up with the config entry
-    2. Returns True on successful unloading
-
-    Proper unloading is important for clean removal of the integration
-    and to prevent memory leaks or lingering subscriptions.
-    """
-    # Create a mock config entry
-    entry = MagicMock(spec=ConfigEntry)
-
-    # Mock the async_unload_platforms method
     with patch.object(
         hass.config_entries, "async_unload_platforms", return_value=True
     ) as mock_unload:
-        # Call the unload function
-        result = await async_unload_entry(hass, entry)
+        assert await async_unload_entry(hass, entry) is True
+    mock_unload.assert_called_once_with(entry, PLATFORMS)
 
-        # Verify the result
-        assert result is True
 
-        # Verify the platforms were unloaded
-        mock_unload.assert_called_once_with(entry, PLATFORMS)
+async def test_setup_and_unload_http_entry(hass: HomeAssistant) -> None:
+    """An HTTP entry creates and stores a polling coordinator."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            COMMUNICATION_METHOD: COMM_METHOD_HTTP,
+            API_PREFIX: "openWB",
+            API_URL: "http://192.0.2.1/openWB/simpleAPI/simpleapi.php",
+            DEVICETYPE: "chargepoint",
+            DEVICEID: 1,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    api_data = {"chargepoint_1": {"power": 1234}}
+    with (
+        patch(
+            "custom_components.openwb2mqtt.OpenWB2MqttApiClient.async_get_data",
+            AsyncMock(return_value=api_data),
+        ),
+        patch.object(
+            hass.config_entries, "async_forward_entry_setups", return_value=True
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert isinstance(coordinator, OpenWB2MqttDataUpdateCoordinator)
+    assert coordinator.data == {"power": 1234}
+
+    with patch.object(hass.config_entries, "async_unload_platforms", return_value=True):
+        assert await async_unload_entry(hass, entry) is True
+    assert entry.entry_id not in hass.data[DOMAIN]

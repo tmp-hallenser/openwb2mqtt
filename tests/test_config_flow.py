@@ -1,322 +1,177 @@
-"""Tests for the openwb2mqtt config flow."""
+"""Tests for the openwb2mqtt config and options flow."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Generator
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-
-from custom_components.openwb2mqtt.config_flow import openwbmqttConfigFlow
 from custom_components.openwb2mqtt.const import (
+    API_PREFIX,
+    API_URL,
+    COMM_METHOD_HTTP,
+    COMM_METHOD_MQTT,
+    COMMUNICATION_METHOD,
+    CONF_VEHICLES,
+    CONF_WALLBOX_POWER,
     DEVICEID,
     DEVICETYPE,
     DOMAIN,
     MQTT_ROOT_TOPIC,
 )
+from homeassistant import config_entries
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 
-pytestmark = pytest.mark.xfail(reason="Outdated: written for an earlier version of the code, rewritten in a follow-up PR")
+
+@pytest.fixture(autouse=True)
+def mock_setup_entry() -> Generator[AsyncMock]:
+    """Prevent the created entry from actually being set up."""
+    with patch(
+        "custom_components.openwb2mqtt.async_setup_entry", return_value=True
+    ) as mock:
+        yield mock
 
 
-async def test_config_flow_user_step_first_time(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for first time setup.
-
-    This test verifies that:
-    1. The initial form is displayed correctly with no input
-    2. When user input is provided for a chargepoint:
-       - The unique ID is set correctly based on MQTT root, device type, and ID
-       - The abort check is called with the correct error
-       - A config entry is created with the correct title and data
-
-    This ensures the config flow correctly handles user input and creates
-    appropriate config entries for the integration.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with no input (should show form)
-    result = await flow.async_step_user()
-    assert result["type"] == FlowResultType.FORM
+async def _start_flow(hass: HomeAssistant, method: str) -> dict:
+    """Start the user flow and pick the communication method."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert "data_schema" in result
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {COMMUNICATION_METHOD: method}
+    )
 
-    # Test the user step with input for a chargepoint
-    user_input = {
+
+@pytest.mark.parametrize(
+    ("device_type", "device_id", "expected_title"),
+    [
+        ("controller", 1, "openWB-controller"),
+        ("counter", 0, "openWB-counter-0"),
+        ("pv", 2, "openWB-pv-2"),
+        ("bat", 3, "openWB-bat-3"),
+        ("vehicle", 1, "openWB-vehicle-1"),
+    ],
+)
+async def test_mqtt_flow_creates_entry(
+    hass: HomeAssistant, device_type: str, device_id: int, expected_title: str
+) -> None:
+    """Non-chargepoint MQTT devices are created right after the details step."""
+    result = await _start_flow(hass, COMM_METHOD_MQTT)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "details_mqtt"
+
+    details = {MQTT_ROOT_TOPIC: "openWB", DEVICETYPE: device_type, DEVICEID: device_id}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], details)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == expected_title
+    assert result["result"].unique_id == expected_title
+    assert result["data"] == {COMMUNICATION_METHOD: COMM_METHOD_MQTT, **details}
+
+
+async def test_mqtt_flow_chargepoint(hass: HomeAssistant) -> None:
+    """A chargepoint asks for the wallbox power in an extra step."""
+    result = await _start_flow(hass, COMM_METHOD_MQTT)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {MQTT_ROOT_TOPIC: "openWB", DEVICETYPE: "chargepoint", DEVICEID: 1},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "chargepoint"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_WALLBOX_POWER: "11"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "openWB-chargepoint-1"
+    assert result["data"] == {
+        COMMUNICATION_METHOD: COMM_METHOD_MQTT,
         MQTT_ROOT_TOPIC: "openWB",
         DEVICETYPE: "chargepoint",
         DEVICEID: 1,
+        CONF_WALLBOX_POWER: "11",
+        CONF_VEHICLES: {},
     }
 
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
 
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-chargepoint-1")
+async def test_http_flow_chargepoint_with_vehicles(hass: HomeAssistant) -> None:
+    """The HTTP chargepoint step parses the vehicle list into a dict."""
+    result = await _start_flow(hass, COMM_METHOD_HTTP)
+    assert result["step_id"] == "details_api"
 
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="chargepoint_already_configured")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            API_PREFIX: "openWB",
+            API_URL: "http://192.0.2.1/openWB/simpleAPI/simpleapi.php",
+            DEVICETYPE: "chargepoint",
+            DEVICEID: 1,
+        },
+    )
+    assert result["step_id"] == "chargepoint"
 
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-chargepoint-1"
-        assert result["data"] == user_input
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_WALLBOX_POWER: "22", CONF_VEHICLES: "0=Standard, 1=Second car"},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "openWB-chargepoint-1"
+    assert result["data"][CONF_VEHICLES] == {"0": "Standard", "1": "Second car"}
 
 
-async def test_config_flow_user_step_controller(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for controller setup.
+async def test_flow_aborts_if_already_configured(hass: HomeAssistant) -> None:
+    """Setting up the same device twice aborts."""
+    MockConfigEntry(domain=DOMAIN, unique_id="openWB-pv-2").add_to_hass(hass)
 
-    This test verifies that when setting up a controller device:
-    1. The unique ID is set correctly using only the MQTT root and "controller"
-       (without a device ID)
-    2. The abort check is called with the correct controller-specific error
-    3. A config entry is created with the correct title and data
+    result = await _start_flow(hass, COMM_METHOD_MQTT)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {MQTT_ROOT_TOPIC: "openWB", DEVICETYPE: "pv", DEVICEID: 2}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
 
-    Controllers are special devices that don't have an ID, so this test ensures
-    they are handled differently from other device types.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
 
-    # Test the user step with input for a controller
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "controller",
-        DEVICEID: 1,
+async def test_options_flow_not_supported_for_non_chargepoint(
+    hass: HomeAssistant,
+) -> None:
+    """Only chargepoints have options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={COMMUNICATION_METHOD: COMM_METHOD_MQTT, DEVICETYPE: "pv", DEVICEID: 2},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_conf_options_supported"
+
+
+async def test_options_flow_chargepoint_http(hass: HomeAssistant) -> None:
+    """The chargepoint options flow stores power and parsed vehicles."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            COMMUNICATION_METHOD: COMM_METHOD_HTTP,
+            DEVICETYPE: "chargepoint",
+            DEVICEID: 1,
+        },
+        options={CONF_WALLBOX_POWER: "11", CONF_VEHICLES: {"0": "Standard"}},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_WALLBOX_POWER: "22", CONF_VEHICLES: "0=Standard, 2=Guest"},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {
+        CONF_WALLBOX_POWER: "22",
+        CONF_VEHICLES: {"0": "Standard", "2": "Guest"},
     }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-controller")
-
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="controller_already_configured")
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-controller"
-        assert result["data"] == user_input
-
-
-async def test_config_flow_user_step_battery(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for battery setup.
-
-    This test verifies that when setting up a battery device:
-    1. The unique ID is set correctly using the MQTT root, "bat", and device ID
-    2. The abort check is called with the correct battery-specific error
-    3. A config entry is created with the correct title and data
-
-    This ensures battery devices are properly configured with the correct
-    identifiers and error handling.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with input for a battery
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "bat",
-        DEVICEID: 1,
-    }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-bat-1")
-
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="batterie_already_configured")
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-bat-1"
-        assert result["data"] == user_input
-
-
-async def test_config_flow_user_step_counter(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for counter setup.
-
-    This test verifies that when setting up a counter device:
-    1. The unique ID is set correctly using the MQTT root, "counter", and device ID
-    2. The abort check is called with the correct counter-specific error
-    3. A config entry is created with the correct title and data
-
-    This ensures counter devices are properly configured with the correct
-    identifiers and error handling.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with input for a counter
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "counter",
-        DEVICEID: 1,
-    }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-counter-1")
-
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="counter_already_configured")
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-counter-1"
-        assert result["data"] == user_input
-
-
-async def test_config_flow_user_step_pv(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for PV setup.
-
-    This test verifies that when setting up a PV (photovoltaic) device:
-    1. The unique ID is set correctly using the MQTT root, "pv", and device ID
-    2. The abort check is called with the correct PV-specific error
-    3. A config entry is created with the correct title and data
-
-    This ensures PV devices are properly configured with the correct
-    identifiers and error handling.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with input for a PV generator
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "pv",
-        DEVICEID: 1,
-    }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-pv-1")
-
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="pv_already_configured")
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-pv-1"
-        assert result["data"] == user_input
-
-
-async def test_config_flow_user_step_vehicle(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for vehicle setup.
-
-    This test verifies that when setting up a vehicle device:
-    1. The unique ID is set correctly using the MQTT root, "vehicle", and device ID
-    2. The abort check is called with the correct vehicle-specific error
-    3. A config entry is created with the correct title and data
-
-    This ensures vehicle devices are properly configured with the correct
-    identifiers and error handling.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with input for a vehicle
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "vehicle",
-        DEVICEID: 1,
-    }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-vehicle-1")
-
-        # Verify abort was called with the correct error
-        mock_abort.assert_called_once_with(error="vehicle_already_configured")
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-vehicle-1"
-        assert result["data"] == user_input
-
-
-async def test_config_flow_user_step_unknown_type(hass: HomeAssistant) -> None:
-    """Test the user step of the config flow for unknown device type.
-
-    This test verifies that when setting up a device with an unknown type:
-    1. The unique ID is still set correctly using the MQTT root, device type, and ID
-    2. The abort check is called without a specific error
-    3. A config entry is created with the correct title and data
-
-    This ensures the config flow is robust and can handle unexpected device types
-    gracefully, allowing for future expansion of supported device types.
-    """
-    # Create the flow
-    flow = openwbmqttConfigFlow()
-    flow.hass = hass
-
-    # Test the user step with input for an unknown device type
-    user_input = {
-        MQTT_ROOT_TOPIC: "openWB",
-        DEVICETYPE: "unknown",
-        DEVICEID: 1,
-    }
-
-    # Mock the async_set_unique_id method
-    with (
-        patch.object(flow, "async_set_unique_id") as mock_set_unique_id,
-        patch.object(flow, "_abort_if_unique_id_configured") as mock_abort,
-    ):
-        # Call the user step with input
-        result = await flow.async_step_user(user_input)
-
-        # Verify the unique ID was set
-        mock_set_unique_id.assert_called_once_with("openWB-unknown-1")
-
-        # Verify abort was called with no specific error
-        mock_abort.assert_called_once_with()
-
-        # Verify the result is a create entry
-        assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["title"] == "openWB-unknown-1"
-        assert result["data"] == user_input
