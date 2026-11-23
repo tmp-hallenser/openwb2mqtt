@@ -454,3 +454,120 @@ async def test_template_sensors_follow_the_active_template(
         float(hass.states.get(f"{prefix}max_preis_strompreisbasiertes_laden").state)
         == 31.0
     )
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "option", "path", "expected", "initial"),
+    [
+        (
+            "select.openwb_chargepoint_1_phasen_pv_laden",
+            "1 Phase",
+            ("pv_charging", "phases_to_use"),
+            1,
+            "Automatik",
+        ),
+        (
+            "select.openwb_chargepoint_1_phasen_sofortladen",
+            "1 Phase",
+            ("instant_charging", "phases_to_use"),
+            1,
+            "Max. Phasen",
+        ),
+        (
+            "select.openwb_chargepoint_1_begrenzung_pv_laden",
+            "SoC",
+            ("pv_charging", "limit", "selected"),
+            "soc",
+            "Keine",
+        ),
+        (
+            "select.openwb_chargepoint_1_begrenzung_eco_laden",
+            "Energiemenge",
+            ("eco_charging", "limit", "selected"),
+            "amount",
+            "Keine",
+        ),
+    ],
+)
+async def test_pv_and_eco_selects(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    entity_id: str,
+    option: str,
+    path: tuple[str, ...],
+    expected: Any,
+    initial: str,
+) -> None:
+    """Phase and limit selects for PV and Eco charging (#89, #74)."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == initial
+
+    await hass.services.async_call(
+        SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+        {ATTR_ENTITY_ID: entity_id, ATTR_OPTION: option},
+        blocking=True,
+    )
+    (published,) = _published_templates(mqtt_mock)
+    node = published["chargemode"]
+    for key in path:
+        node = node[key]
+    assert node == expected
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "value", "path", "expected"),
+    [
+        ("pv_charging_soc_limit_control", 80, ("pv_charging", "limit", "soc"), 80),
+        (
+            "pv_charging_energy_limit_control",
+            15,
+            ("pv_charging", "limit", "amount"),
+            15000,
+        ),
+        ("pv_charging_min_soc_control", 30, ("pv_charging", "min_soc"), 30),
+        ("eco_charging_soc_limit_control", 70, ("eco_charging", "limit", "soc"), 70),
+        (
+            "eco_charging_energy_limit_control",
+            8,
+            ("eco_charging", "limit", "amount"),
+            8000,
+        ),
+    ],
+)
+async def test_pv_and_eco_numbers(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    entity_id: str,
+    value: float,
+    path: tuple[str, ...],
+    expected: Any,
+) -> None:
+    """Limit and min SoC numbers for PV and Eco charging (#74, #8)."""
+    names = {
+        "pv_charging_soc_limit_control": "soc_limit_pv_laden",
+        "pv_charging_energy_limit_control": "energie_limit_pv_laden",
+        "pv_charging_min_soc_control": "min_soc_pv_laden",
+        "eco_charging_soc_limit_control": "soc_limit_eco_laden",
+        "eco_charging_energy_limit_control": "energie_limit_eco_laden",
+    }
+    full_id = f"number.openwb_chargepoint_1_{names[entity_id]}"
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    assert hass.states.get(full_id) is not None
+
+    await hass.services.async_call(
+        NUMBER_DOMAIN,
+        SERVICE_SET_VALUE,
+        {ATTR_ENTITY_ID: full_id, ATTR_VALUE: value},
+        blocking=True,
+    )
+    (published,) = _published_templates(mqtt_mock)
+    node = published["chargemode"]
+    for key in path:
+        node = node[key]
+    assert node == expected
+    assert isinstance(node, int)
