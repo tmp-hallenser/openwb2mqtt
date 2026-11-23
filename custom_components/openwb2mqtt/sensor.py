@@ -45,7 +45,7 @@ async def async_setup_entry(
     sensors_to_add = []
 
     if config.data.get(COMMUNICATION_METHOD) == COMM_METHOD_HTTP:
-        coordinator = hass.data[DOMAIN][config.entry_id]
+        coordinator = config.runtime_data.coordinator
         if device_type == "controller":
             for description in SENSORS_CONTROLLER:
                 if description.api_key is None:
@@ -123,7 +123,7 @@ async def async_setup_entry(
                 "Chargepoint",
             )
 
-            manager: ChargeTemplateManager = hass.data[DOMAIN][config.entry_id]
+            manager = config.runtime_data.charge_template
             async_add_entities(
                 openwbChargeTemplateSensor(
                     uniqueID=config.unique_id,

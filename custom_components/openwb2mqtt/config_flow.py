@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from homeassistant.components.mqtt import DOMAIN as MQTT_DOMAIN
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlowWithReload
 from homeassistant.core import callback
 
@@ -78,8 +79,9 @@ class openwbmqttConfigFlow(ConfigFlow, domain=DOMAIN):
             comm_method = user_input[COMMUNICATION_METHOD]
             if comm_method == COMM_METHOD_HTTP:
                 return await self.async_step_details_api()
-            else:
-                return await self.async_step_details_mqtt()
+            if not self.hass.config_entries.async_entries(MQTT_DOMAIN):
+                return self.async_abort(reason="mqtt_not_configured")
+            return await self.async_step_details_mqtt()
 
         return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)
 

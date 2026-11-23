@@ -33,6 +33,14 @@ def mock_setup_entry() -> Generator[AsyncMock]:
         yield mock
 
 
+@pytest.fixture
+def mqtt_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Pretend the MQTT integration is configured."""
+    entry = MockConfigEntry(domain="mqtt")
+    entry.add_to_hass(hass)
+    return entry
+
+
 async def _start_flow(hass: HomeAssistant, method: str) -> dict:
     """Start the user flow and pick the communication method."""
     result = await hass.config_entries.flow.async_init(
@@ -55,6 +63,7 @@ async def _start_flow(hass: HomeAssistant, method: str) -> dict:
         ("vehicle", 1, "openWB-vehicle-1"),
     ],
 )
+@pytest.mark.usefixtures("mqtt_entry")
 async def test_mqtt_flow_creates_entry(
     hass: HomeAssistant, device_type: str, device_id: int, expected_title: str
 ) -> None:
@@ -72,6 +81,7 @@ async def test_mqtt_flow_creates_entry(
     assert result["data"] == {COMMUNICATION_METHOD: COMM_METHOD_MQTT, **details}
 
 
+@pytest.mark.usefixtures("mqtt_entry")
 async def test_mqtt_flow_chargepoint(hass: HomeAssistant) -> None:
     """A chargepoint asks for the wallbox power in an extra step."""
     result = await _start_flow(hass, COMM_METHOD_MQTT)
@@ -122,6 +132,14 @@ async def test_http_flow_chargepoint_with_vehicles(hass: HomeAssistant) -> None:
     assert result["data"][CONF_VEHICLES] == {"0": "Standard", "1": "Second car"}
 
 
+async def test_mqtt_flow_requires_mqtt_integration(hass: HomeAssistant) -> None:
+    """Choosing MQTT without a configured MQTT integration aborts."""
+    result = await _start_flow(hass, COMM_METHOD_MQTT)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "mqtt_not_configured"
+
+
+@pytest.mark.usefixtures("mqtt_entry")
 async def test_flow_aborts_if_already_configured(hass: HomeAssistant) -> None:
     """Setting up the same device twice aborts."""
     MockConfigEntry(domain=DOMAIN, unique_id="openWB-pv-2").add_to_hass(hass)

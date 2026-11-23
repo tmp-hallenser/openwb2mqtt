@@ -41,7 +41,7 @@ async def async_setup_entry(
     sensors_to_add = []
 
     if config.data.get(COMMUNICATION_METHOD) == COMM_METHOD_HTTP:
-        coordinator = hass.data[DOMAIN][config.entry_id]
+        coordinator = config.runtime_data.coordinator
         if device_type == "chargepoint":
             for description in BINARY_SENSORS_PER_CHARGEPOINT:
                 if description.api_key is None:
