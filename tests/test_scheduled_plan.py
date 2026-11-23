@@ -541,3 +541,71 @@ async def test_unrelated_fields_unchanged(
     (published,) = _published_templates(mqtt_mock)
     template["chargemode"]["scheduled_charging"]["plans"][0]["limit"]["soc_limit"] = 95
     assert json.dumps(published, sort_keys=True) == json.dumps(template, sort_keys=True)
+
+
+async def test_script_without_pauses(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Four quick changes all stick although openWB's echoes interleave.
+
+    Replays the order seen in production: departure, target SoC, plan on and
+    charge mode, each sent before openWB echoed the previous one. Before the
+    fix only the departure and the charge mode survived.
+    """
+    await _setup(hass, entity_registry)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+
+    def echo(index: int) -> None:
+        # openWB stores and republishes exactly what it received.
+        _publish_template(hass, _published_templates(mqtt_mock)[index])
+
+    departure = datetime(2026, 11, 24, 7, 30, tzinfo=TZ)
+    await _call(
+        hass,
+        DATETIME_DOMAIN,
+        SERVICE_SET_DATETIME,
+        {ATTR_ENTITY_ID: ABFAHRT, ATTR_DATETIME: departure},
+    )
+    await _call(
+        hass,
+        NUMBER_DOMAIN,
+        SERVICE_SET_VALUE,
+        {ATTR_ENTITY_ID: ZIEL_SOC, ATTR_VALUE: 80},
+    )
+    echo(0)
+    await hass.async_block_till_done()
+    await _call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: AKTIV})
+    echo(1)
+    await hass.async_block_till_done()
+    await _call(
+        hass,
+        SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+        {
+            ATTR_ENTITY_ID: "select.openwb_chargepoint_1_lademodus",
+            ATTR_OPTION: "Target Charging",
+        },
+    )
+    echo(2)
+    echo(3)
+    await hass.async_block_till_done()
+
+    final = _published_templates(mqtt_mock)[-1]
+    assert final["chargemode"]["selected"] == "scheduled_charging"
+    assert final["chargemode"]["scheduled_charging"]["plans"][0] == scheduled_plan(
+        active=True,
+        frequency={"selected": "once", "once": "2026-11-24", "weekly": [False] * 7},
+        time="07:30",
+        limit={"selected": "soc", "amount": 1000, "soc_limit": 90, "soc_scheduled": 80},
+    )
+    assert datetime.fromisoformat(hass.states.get(ABFAHRT).state) == departure
+    assert float(hass.states.get(ZIEL_SOC).state) == 80
+    assert hass.states.get(BEGRENZUNG).state == "SoC"
+    assert hass.states.get(AKTIV).state == "on"
+    assert (
+        hass.states.get("select.openwb_chargepoint_1_lademodus").state
+        == "Target Charging"
+    )

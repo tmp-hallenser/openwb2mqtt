@@ -4,6 +4,7 @@ import copy
 from datetime import timedelta
 import json
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -13,7 +14,10 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
-from custom_components.openwb2mqtt.charge_template import ChargeTemplateManager
+from custom_components.openwb2mqtt.charge_template import (
+    PENDING_TIMEOUT,
+    ChargeTemplateManager,
+)
 from custom_components.openwb2mqtt.const import (
     COMM_METHOD_MQTT,
     COMMUNICATION_METHOD,
@@ -706,3 +710,164 @@ async def test_manager_quick_list_changes_are_combined(
     plan = second["chargemode"]["scheduled_charging"]["plans"][0]
     assert plan["active"] is True
     assert plan["limit"]["soc_limit"] == 95
+
+
+# --- changes pending until openWB confirms them -------------------------------
+
+MODE = ("chargemode", "selected")
+INSTANT_CURRENT = ("chargemode", "instant_charging", "current")
+PV_MIN_CURRENT = ("chargemode", "pv_charging", "min_current")
+
+
+def _pending_paths(manager: ChargeTemplateManager) -> list[tuple]:
+    return [path for path, _value, _published in manager._pending]
+
+
+async def _ready_manager(hass: HomeAssistant) -> ChargeTemplateManager:
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    return _manager(hass)
+
+
+async def test_echo_of_older_change_keeps_newer_changes(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """An echo arriving between changes does not drop the unconfirmed ones.
+
+    Seen in production: a script made four changes without pauses and the
+    echo of the first change reset the base for the third, so the second one
+    was overwritten in openWB.
+    """
+    manager = await _ready_manager(hass)
+
+    await manager.async_set(MODE, "pv_charging")  # A
+    await manager.async_set(INSTANT_CURRENT, 8)  # B
+    p1, p2 = _published_templates(mqtt_mock)
+    assert p2["chargemode"]["selected"] == "pv_charging"
+    assert p2["chargemode"]["instant_charging"]["current"] == 8
+
+    _publish_template(hass, p1)  # echo of P1: A, not B
+    await hass.async_block_till_done()
+    # Entities show what openWB has, not the pending change.
+    assert manager.get(INSTANT_CURRENT) == 16
+
+    await manager.async_set(PV_MIN_CURRENT, 10)  # C
+    p3 = _published_templates(mqtt_mock)[-1]
+    assert p3["chargemode"]["selected"] == "pv_charging"
+    assert p3["chargemode"]["instant_charging"]["current"] == 8
+    assert p3["chargemode"]["pv_charging"]["min_current"] == 10
+
+
+async def test_confirmation_clears_pending(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """Changes confirmed by openWB are no longer pending."""
+    manager = await _ready_manager(hass)
+
+    await manager.async_set(MODE, "pv_charging")
+    await manager.async_set(INSTANT_CURRENT, 8)
+    p1, p2 = _published_templates(mqtt_mock)
+
+    _publish_template(hass, p1)
+    await hass.async_block_till_done()
+    assert _pending_paths(manager) == [INSTANT_CURRENT]
+
+    _publish_template(hass, p2)
+    await hass.async_block_till_done()
+    assert _pending_paths(manager) == []
+    assert manager.get(INSTANT_CURRENT) == 8
+
+
+async def test_same_path_twice_keeps_the_latest_value(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """The echo of an older value does not confirm the newer one."""
+    manager = await _ready_manager(hass)
+
+    await manager.async_set(INSTANT_CURRENT, 10)
+    await manager.async_set(INSTANT_CURRENT, 12)
+    p1, _p2 = _published_templates(mqtt_mock)
+    assert [value for _p, value, _t in manager._pending] == [12]
+
+    _publish_template(hass, p1)  # echo with 10
+    await hass.async_block_till_done()
+    assert _pending_paths(manager) == [INSTANT_CURRENT]
+
+    await manager.async_set(MODE, "pv_charging")
+    p3 = _published_templates(mqtt_mock)[-1]
+    assert p3["chargemode"]["instant_charging"]["current"] == 12
+
+
+async def test_unconfirmed_change_expires(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A change openWB does not confirm within PENDING_TIMEOUT is dropped."""
+    manager = await _ready_manager(hass)
+    clock = 1000.0
+    with patch(
+        "custom_components.openwb2mqtt.charge_template.monotonic",
+        side_effect=lambda: clock,
+    ):
+        await manager.async_set(INSTANT_CURRENT, 8)
+
+        # Still within the timeout: kept.
+        clock += PENDING_TIMEOUT - 1
+        _publish_template(hass, charge_template())
+        await hass.async_block_till_done()
+        assert _pending_paths(manager) == [INSTANT_CURRENT]
+
+        # openWB rejected it: dropped with a warning.
+        clock += 2
+        _publish_template(hass, charge_template())
+        await hass.async_block_till_done()
+        assert _pending_paths(manager) == []
+        assert "did not confirm chargemode/instant_charging/current" in caplog.text
+
+        await manager.async_set(MODE, "pv_charging")
+    published = _published_templates(mqtt_mock)[-1]
+    assert published["chargemode"]["instant_charging"]["current"] == 16
+
+
+async def test_external_change_is_kept(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """A change made in openWB is not reverted by the next change from HA."""
+    manager = await _ready_manager(hass)
+
+    await manager.async_set(MODE, "pv_charging")
+    # Changed in the openWB UI, before openWB echoed the change from HA.
+    external = charge_template()
+    external["chargemode"]["pv_charging"]["min_current"] = 13
+    _publish_template(hass, external)
+    await hass.async_block_till_done()
+
+    await manager.async_set(INSTANT_CURRENT, 8)
+    published = _published_templates(mqtt_mock)[-1]
+    assert published["chargemode"]["pv_charging"]["min_current"] == 13
+    assert published["chargemode"]["selected"] == "pv_charging"
+    assert published["chargemode"]["instant_charging"]["current"] == 8
+
+
+async def test_pending_change_for_removed_path_is_dropped(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """A pending plan change is dropped when the plan is deleted in openWB."""
+    manager = await _ready_manager(hass)
+
+    await manager.async_set((*PLAN, "active"), True)
+    _publish_template(hass, charge_template(plans=[]))
+    await hass.async_block_till_done()
+    assert _pending_paths(manager) == []
+
+    await manager.async_set(MODE, "pv_charging")
+    published = _published_templates(mqtt_mock)[-1]
+    assert published == {
+        **charge_template(plans=[]),
+        "chargemode": {
+            **charge_template(plans=[])["chargemode"],
+            "selected": "pv_charging",
+        },
+    }
