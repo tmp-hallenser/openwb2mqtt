@@ -1,6 +1,5 @@
 """Tests for the openwb2mqtt sensor platform."""
 
-import json
 import time
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -8,11 +7,9 @@ import pytest
 
 from custom_components.openwb2mqtt.const import (
     DOMAIN,
-    openwbDynamicSensorEntityDescription,
     openwbSensorEntityDescription,
 )
 from custom_components.openwb2mqtt.sensor import (
-    openwbDynamicSensor,
     openwbSensor,
 )
 from homeassistant.components.mqtt.models import ReceiveMessage
@@ -348,141 +345,3 @@ async def test_sensor_value_function(hass: HomeAssistant) -> None:
 
     # Verify value function works correctly
     assert result == "10.5"
-
-
-async def test_dynamic_sensor_init(hass: HomeAssistant) -> None:
-    """Test initialization of openwbDynamicSensor.
-
-    This test verifies that the openwbDynamicSensor entity is correctly initialized with:
-    1. The proper name, unique_id, and device_info
-    2. The correct device class, unit of measurement, and state class
-    3. The correct device ID
-
-    Dynamic sensors differ from regular sensors in that they use template-based
-    topics that are populated at runtime based on configuration received via MQTT.
-    """
-    # Create a dynamic sensor description
-    description = openwbDynamicSensorEntityDescription(
-        key="instant_charging_current",
-        name="Instant Charging Current",
-        device_class=SensorDeviceClass.CURRENT,
-        native_unit_of_measurement="A",
-        state_class=SensorStateClass.MEASUREMENT,
-        mqttTopicTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: (
-            json.loads(x)
-            .get("chargemode", {})
-            .get("instant_charging", {})
-            .get("current")
-        ),
-    )
-
-    # Create the sensor
-    sensor = openwbDynamicSensor(
-        uniqueID="test_unique_id",
-        description=description,
-        device_friendly_name="Test Device",
-        mqtt_root="openWB",
-        device_id=1,
-    )
-
-    # Verify sensor properties
-    assert sensor.name == "Instant Charging Current"
-    assert sensor.unique_id == "test_unique_id_instant_charging_current"
-    assert sensor.device_info["name"] == "Test Device"
-    assert sensor.device_info["identifiers"] == {(DOMAIN, "Test Device", "openWB")}
-    assert sensor.device_id == 1
-
-
-async def test_dynamic_sensor_subscription_update(hass: HomeAssistant) -> None:
-    """Test updating subscriptions in dynamic sensor.
-
-    This test verifies that the dynamic sensor entity correctly:
-    1. Subscribes to the config topic when added to Home Assistant
-    2. Processes config messages to extract the charge template ID
-    3. Updates its subscription to the template topic with the correct ID
-    4. Processes template messages to extract and update its state
-
-    This tests the dynamic subscription mechanism that allows entities to
-    adapt their MQTT topics based on configuration received via MQTT.
-    """
-    # Mock the MQTT subscription
-    with patch("homeassistant.components.mqtt.async_subscribe") as mock_subscribe:
-        mock_subscribe.return_value = AsyncMock(return_value=None)
-
-        # Create a dynamic sensor description
-        description = openwbDynamicSensorEntityDescription(
-            key="instant_charging_current",
-            name="Instant Charging Current",
-            device_class=SensorDeviceClass.CURRENT,
-            native_unit_of_measurement="A",
-            state_class=SensorStateClass.MEASUREMENT,
-            mqttTopicTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-            value_fn=lambda x: (
-                json.loads(x)
-                .get("chargemode", {})
-                .get("instant_charging", {})
-                .get("current")
-            ),
-        )
-
-        # Create the sensor
-        sensor = openwbDynamicSensor(
-            uniqueID="test_unique_id",
-            description=description,
-            device_friendly_name="Test Device",
-            mqtt_root="openWB",
-            device_id=1,
-        )
-
-        # Add the sensor to hass
-        sensor.hass = hass
-
-        # Call async_added_to_hass
-        await sensor.async_added_to_hass()
-
-        # Verify subscription to config topic
-        assert mock_subscribe.call_count == 1
-        assert (
-            mock_subscribe.call_args[0][1]
-            == "openWB/chargepoint/1/get/connected_vehicle/config"
-        )
-
-        # Get the config callback
-        config_callback = mock_subscribe.call_args[0][2]
-
-        # Simulate config message with charge template ID
-        config_message = ReceiveMessage(
-            topic="openWB/chargepoint/1/get/connected_vehicle/config",
-            payload='{"charge_template": 123}',
-            qos=0,
-            retain=False,
-            subscribed_topic="openWB/chargepoint/1/get/connected_vehicle/config",
-            timestamp=time.time(),
-        )
-        config_callback(config_message)
-        await hass.async_block_till_done()
-
-        # Verify subscription to template topic
-        assert mock_subscribe.call_count == 2
-        assert (
-            mock_subscribe.call_args[0][1]
-            == "openWB/vehicle/template/charge_template/123"
-        )
-
-        # Get the template callback
-        template_callback = mock_subscribe.call_args[0][2]
-
-        # Simulate template message
-        template_message = ReceiveMessage(
-            topic="openWB/vehicle/template/charge_template/123",
-            payload='{"chargemode": {"instant_charging": {"current": 16}}}',
-            qos=0,
-            retain=False,
-            subscribed_topic="openWB/vehicle/template/charge_template/123",
-            timestamp=time.time(),
-        )
-        template_callback(template_message)
-
-        # Verify state was updated
-        assert sensor._attr_native_value == 16

@@ -427,3 +427,30 @@ async def test_repair_issue_removed_on_unload(
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert _issue(issue_registry, hass) is None
+
+
+async def test_template_sensors_follow_the_active_template(
+    hass: HomeAssistant, mqtt_mock: MqttMockHAClient
+) -> None:
+    """The template sensors read the chargepoint's template, not the vehicle's."""
+    await _setup_chargepoint(hass)
+    template = charge_template()
+    template["chargemode"]["instant_charging"]["current"] = 12
+    template["chargemode"]["pv_charging"]["min_current"] = 7
+    template["chargemode"]["eco_charging"]["max_price"] = 0.00031
+    _publish_template(hass, template)
+    # A vehicle template with other values must not be used.
+    async_fire_mqtt_message(
+        hass,
+        "openWB/vehicle/template/charge_template/1",
+        json.dumps(charge_template()),
+    )
+    await hass.async_block_till_done()
+
+    prefix = "sensor.openwb_chargepoint_1_"
+    assert float(hass.states.get(f"{prefix}soll_ladestrom_sofortladen").state) == 12
+    assert float(hass.states.get(f"{prefix}min_dauerstrom_pv_laden").state) == 7
+    assert (
+        float(hass.states.get(f"{prefix}max_preis_strompreisbasiertes_laden").state)
+        == 31.0
+    )

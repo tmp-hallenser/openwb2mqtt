@@ -413,13 +413,12 @@ class openwbChargeTemplateNumberEntityDescription(openWBNumberEntityDescription)
     to_template: Callable[[float], Any] = int
 
 
-# Define a special sensor type for dynamic MQTT topic subscription
 @dataclass(frozen=False)
-class openwbDynamicSensorEntityDescription(openwbSensorEntityDescription):
-    """Enhance the sensor entity description for openWB with dynamic MQTT topic support."""
+class openwbChargeTemplateSensorEntityDescription(openwbSensorEntityDescription):
+    """A sensor showing a value of the chargepoint's active charge template."""
 
-    # This will be used to store the base topic pattern that will be formatted with the charge template ID
-    mqttTopicTemplate: str | None = None
+    template_path: tuple[str, ...] = ()
+    from_template: Callable[[Any], Any] | None = None
 
 
 @dataclass(frozen=False)
@@ -786,7 +785,7 @@ SENSORS_PER_CHARGEPOINT = [
         suggested_display_precision=1,
         api_value_fn=lambda x: x,
     ),
-    openwbDynamicSensorEntityDescription(
+    openwbChargeTemplateSensorEntityDescription(
         key="instant_charging_current",
         api_key="instant_charging_current",
         name="Soll-Ladestrom (Sofortladen)",
@@ -796,13 +795,10 @@ SENSORS_PER_CHARGEPOINT = [
         icon="mdi:current-ac",
         suggested_display_precision=1,
         entity_registry_enabled_default=True,
-        mqttTopicTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "instant_charging", "current"
-        ),
+        template_path=("chargemode", "instant_charging", "current"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
-    openwbDynamicSensorEntityDescription(
+    openwbChargeTemplateSensorEntityDescription(
         key="pv_charging_min_current",
         api_key="pv_charging_min_current",
         name="Min. Dauerstrom (PV-Laden)",
@@ -812,31 +808,20 @@ SENSORS_PER_CHARGEPOINT = [
         icon="mdi:current-ac",
         suggested_display_precision=1,
         entity_registry_enabled_default=True,
-        mqttTopicTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        value_fn=lambda x: _safeNestedGet(
-            x, "chargemode", "pv_charging", "min_current"
-        ),
+        template_path=("chargemode", "pv_charging", "min_current"),
         api_value_fn=lambda x: _safeFloat(x),
     ),
     # Dynamic number for price-based charging maximum price
-    openwbDynamicSensorEntityDescription(
+    openwbChargeTemplateSensorEntityDescription(
         key="price_based_charging_max_price",
         name="Max. Preis (Strompreisbasiertes Laden)",
         native_unit_of_measurement="ct/kWh",
         device_class=None,
         icon="mdi:currency-eur",
         entity_category=EntityCategory.DIAGNOSTIC,
-        # This is a template that will be formatted with the charge template ID for reading the current value
-        mqttTopicTemplate="{mqtt_root}/vehicle/template/charge_template/{charge_template_id}",
-        # This is a template that will be formatted with the charge template ID for setting the current value
-        # Extract the current value from the JSON payload
-        value_fn=lambda x: _safeFloat(
-            _safeNestedGet(x, "chargemode", "eco_charging", "max_price"),
-            c=100000,
-            op="mult",
-        )
-        if _safeNestedGet(x, "chargemode", "eco_charging", "max_price") is not None
-        else None,
+        # openWB stores EUR/Wh, the sensor shows ct/kWh
+        template_path=("chargemode", "eco_charging", "max_price"),
+        from_template=lambda x: _ctPerKwh(x),
     ),
 ]
 
@@ -1011,7 +996,7 @@ NUMBERS_PER_CHARGEPOINT = [
         native_step=1.0,
         entity_category=EntityCategory.CONFIG,
         mqttTopicCommand="set/vehicle/_vehicleID_/soc_module/calculated_soc_state/manual_soc",
-        mqttTopicCurrentValue="chargepoint/_chargePointID_/get/connected_vehicle/soc",
+        mqttTopicCurrentValue="get/connected_vehicle/soc",
         mqttTopicChargeMode=None,
         entity_registry_enabled_default=True,
         # entity_registry_enabled_default=False,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from homeassistant.components import mqtt
@@ -11,9 +12,8 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -223,6 +223,8 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
 
         self.deviceID = deviceID
         self.mqtt_root = mqtt_root
+        # Vehicle connected to the chargepoint, for commands addressed to it.
+        self._vehicle_id: int | None = None
 
         if native_min_value is not None:
             self._attr_native_min_value = native_min_value
@@ -257,6 +259,22 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
             self.entity_description.mqttTopicCurrentValue, message_received
         )
 
+        if "_vehicleID_" in (self.entity_description.mqttTopicCommand or ""):
+
+            @callback
+            def vehicle_info_received(message):
+                """Remember which vehicle is connected to the chargepoint."""
+                try:
+                    self._vehicle_id = int(json.loads(message.payload)["id"])
+                except (ValueError, TypeError, KeyError) as err:
+                    _LOGGER.debug("No vehicle ID in %s: %s", message.topic, err)
+                    self._vehicle_id = None
+
+            await self.async_subscribe_topic(
+                f"{self.mqtt_root}/chargepoint/{self.deviceID}/get/connected_vehicle/info",
+                vehicle_info_received,
+            )
+
     async def async_set_native_value(self, value):
         """Update the current value.
 
@@ -286,11 +304,12 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
         # For the special SoC topic, we need to replace the _vehicleID_ placeholder
         # with the actual vehicle ID associated with this charge point
         if "_vehicleID_" in topic:
-            vehicle_id = self.get_assigned_vehicle(self.hass, DOMAIN)
-            if vehicle_id is not None:
-                # Replace the placeholder with the actual vehicle ID
-                topic = topic.replace("_vehicleID_", vehicle_id)
-                publish_mqtt_message = True
+            if self._vehicle_id is None:
+                raise HomeAssistantError(
+                    f"No vehicle connected to chargepoint {self.deviceID}"
+                )
+            topic = topic.replace("_vehicleID_", str(self._vehicle_id))
+            publish_mqtt_message = True
         else:
             publish_mqtt_message = True
 
@@ -304,24 +323,6 @@ class openWBNumber(OpenWBBaseEntity, NumberEntity):
             await mqtt.async_publish(self.hass, topic, payload)
 
         return publish_mqtt_message
-
-    def get_assigned_vehicle(self, hass: HomeAssistant, domain: str) -> int | None:
-        """Get the vehicle that is currently assigned to this charge point."""
-        ent_reg = er.async_get(hass)
-        unique_id = slugify(f"{self.mqtt_root}_chargepoint_{self.deviceID}_fahrzeug_id")
-        vehicle_id_entity = ent_reg.async_get_entity_id(
-            Platform.SENSOR,
-            domain,
-            unique_id,
-        )
-        if vehicle_id_entity is None:
-            return None
-
-        state = hass.states.get(vehicle_id_entity)
-        if state is None:
-            return None
-
-        return state.state
 
 
 class openwbChargeTemplateNumber(OpenWBBaseEntity, NumberEntity):
