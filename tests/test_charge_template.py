@@ -1,6 +1,7 @@
 """Tests for the charge template selects and numbers (MQTT)."""
 
 import copy
+from datetime import timedelta
 import json
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_mqtt_message,
+    async_fire_time_changed,
 )
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
@@ -34,6 +36,8 @@ from homeassistant.components.select import (
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 
 # HA's MQTT client keeps a periodic timer running after the test.
 pytestmark = pytest.mark.parametrize("expected_lingering_timers", [True])
@@ -357,3 +361,69 @@ async def test_each_chargepoint_writes_its_own_template(
     expected = copy.deepcopy(template_cp2)
     expected["chargemode"]["instant_charging"]["limit"]["amount"] = 12000
     assert _published_templates(mqtt_mock, 2) == [expected]
+
+
+def _issue(
+    issue_registry: ir.IssueRegistry, hass: HomeAssistant
+) -> ir.IssueEntry | None:
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    return issue_registry.async_get_issue(
+        DOMAIN, f"missing_charge_template_{entry.entry_id}"
+    )
+
+
+async def test_repair_issue_when_template_missing(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """A missing template (e.g. not bridged) raises a repair issue, cleared on arrival."""
+    await _setup_chargepoint(hass)
+    assert _issue(issue_registry, hass) is None
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+    issue = _issue(issue_registry, hass)
+    assert issue is not None
+    assert issue.translation_key == "missing_charge_template"
+    assert issue.translation_placeholders == {
+        "entry_title": "openWB-chargepoint-1",
+        "state_topic": "openWB/chargepoint/1/set/charge_template",
+        "command_topic": "openWB/set/chargepoint/1/set/charge_template",
+    }
+
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+    assert _issue(issue_registry, hass) is None
+
+
+async def test_no_repair_issue_when_template_arrives(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """No issue if openWB publishes the template in time."""
+    await _setup_chargepoint(hass)
+    _publish_template(hass, charge_template())
+    await hass.async_block_till_done()
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+    assert _issue(issue_registry, hass) is None
+
+
+async def test_repair_issue_removed_on_unload(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """Removing or reloading the entry clears the issue."""
+    await _setup_chargepoint(hass)
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+    assert _issue(issue_registry, hass) is not None
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _issue(issue_registry, hass) is None

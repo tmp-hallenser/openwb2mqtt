@@ -24,8 +24,16 @@ from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_call_later
+
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# openWB publishes the template retained, so it normally arrives right after
+# subscribing. If it does not, the MQTT bridge most likely does not forward it.
+MISSING_TEMPLATE_TIMEOUT = 60
 
 
 class ChargeTemplateManager:
@@ -45,6 +53,7 @@ class ChargeTemplateManager:
         # made before openWB echoes the first one would overwrite each other.
         self._working: dict[str, Any] | None = None
         self._listeners: list[Callable[[], None]] = []
+        self._issue_id: str | None = None
 
     @property
     def template(self) -> dict[str, Any] | None:
@@ -78,6 +87,52 @@ class ChargeTemplateManager:
         )
 
     @callback
+    def async_report_missing_template(
+        self,
+        issue_id: str,
+        entry_title: str,
+        timeout: float = MISSING_TEMPLATE_TIMEOUT,
+    ) -> CALLBACK_TYPE:
+        """Raise a repair issue if no template arrives within ``timeout`` seconds.
+
+        The issue is removed when a template arrives or when the returned
+        callback is called (on unload).
+        """
+        self._issue_id = issue_id
+
+        @callback
+        def check(_now: Any) -> None:
+            if self._template is not None:
+                return
+            _LOGGER.warning(
+                "%s: no charge template received on %s; check the MQTT bridge",
+                entry_title,
+                self.state_topic,
+            )
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="missing_charge_template",
+                translation_placeholders={
+                    "entry_title": entry_title,
+                    "state_topic": self.state_topic,
+                    "command_topic": self.command_topic,
+                },
+            )
+
+        cancel = async_call_later(self.hass, timeout, check)
+
+        @callback
+        def stop() -> None:
+            cancel()
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+        return stop
+
+    @callback
     def _message_received(self, message: ReceiveMessage) -> None:
         """Store a template published by openWB and notify the entities."""
         if not message.payload:
@@ -93,6 +148,8 @@ class ChargeTemplateManager:
             return
         if not isinstance(template, dict):
             return
+        if self._template is None and self._issue_id is not None:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
         self._template = template
         self._working = copy.deepcopy(template)
         for update_callback in list(self._listeners):

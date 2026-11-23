@@ -1,4 +1,10 @@
 {
+    "issues": {
+        "missing_charge_template": {
+            "title": "openWB: Ladeprofil von {entry_title} kommt nicht an",
+            "description": "Seit dem Start ist kein Ladeprofil auf `{state_topic}` angekommen. Ohne dieses Topic bleiben Lademodus, Begrenzungen und Ladeströme unbekannt und lassen sich nicht ändern.\n\nWenn Sie eine MQTT-Bridge zur openWB verwenden, ergänzen Sie in deren Konfiguration:\n\n`topic {state_topic} in`\n`topic {command_topic} out`\n\nStarten Sie danach den MQTT-Broker neu. Die Meldung verschwindet, sobald das Ladeprofil ankommt."
+        }
+    },
     "config": {
         "abort": {
             "already_configured": "Diese Integration ist schon konfiguriert. Geben Sie ein anderes MQTT-Wurzeltopic/Präfix ein, wählen Sie einen anderen Gerätetyp aus oder geben Sie eine andere Geräte-ID ein.",

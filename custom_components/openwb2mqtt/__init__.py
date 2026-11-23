@@ -53,6 +53,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, entry.data[MQTT_ROOT_TOPIC], entry.data[DEVICEID]
         )
         entry.async_on_unload(await manager.async_start())
+        entry.async_on_unload(
+            manager.async_report_missing_template(
+                f"missing_charge_template_{entry.entry_id}", entry.title
+            )
+        )
         hass.data[DOMAIN][entry.entry_id] = manager
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
