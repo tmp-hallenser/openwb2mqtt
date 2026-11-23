@@ -95,13 +95,17 @@ The following image shows an example of the MQTT topics published by openWB and 
     *   Update the `topic` lines to match the `Device ID` of the devices you want to integrate.
     *   Use `in` for topics you want to read from openWB and `out` for topics you want to send commands to.
 
-**Example `openwb.conf` snippet:**
+**Example `openwb.conf` snippet for chargepoint 1:**
 ```
 connection openwb2
 address 192.168.1.123:1883
 topic openWB/chargepoint/1/# in
+topic openWB/vehicle/+/name in
 topic openWB/set/chargepoint/1/# out
+topic openWB/set/vehicle/+/soc_module/calculated_soc_state/manual_soc out
 ```
+The controls need no other `out` topics. In particular, the openWB simpleAPI
+service is not needed for MQTT.
 3.  Restart your MQTT broker.
 
 #### Step 1: Add the Integration
@@ -167,8 +171,9 @@ This integration can create the following device types in Home Assistant:
     *   This is a known cosmetic issue. The integration sends the command to openWB correctly, and the change is applied there. The UI in Home Assistant will correct itself on the next data poll. This happens because the UI displays names, but the integration works with numeric IDs internally.
 
 *   **MQTT: I can see sensor values, but my controls (e.g., changing charge mode) don't work.**
-    *   This can be an issue with your MQTT bridge configuration (missing `out` topics).
-    *   **Important Note:** Since openWB version 2.1.8, setting values via the standard MQTT topics is often no longer supported since the topic structure changed significantly. This was a primary reason for creating the API method. If you need to control your wallbox, using the API method is strongly recommended.
+    *   Check that your MQTT bridge forwards `openWB/set/chargepoint/<ID>/#` **out** and `openWB/chargepoint/<ID>/set/charge_template` **in** (see `mosquittoExampleConfiguration.conf`). If the charge template does not arrive, Home Assistant shows a repair notice (Settings > Repairs) with the exact topics.
+    *   Charge mode, limits, currents and phases are written as the complete charge template to `openWB/set/chargepoint/<ID>/set/charge_template`, the way openWB 2.x expects it. Older versions of this integration used topics that openWB no longer accepts.
+    *   With openWB's "temporary charge templates" enabled, changes only affect the chargepoint's temporary copy of the template; otherwise openWB also stores them in the vehicle's charge template.
 
 *   **How do I find the MQTT topics for a specific entity?**
     *   For advanced debugging with MQTT, you can map topics to entities. Check the `MQTT_Topic_Reference.md` file in this repository. For a given entry, like `SENSORS_PER_CHARGEPOINT` with `key="get/power"`, the topic will be `{mqttRoot}/chargepoint/{deviceID}/get/power`. You can then find the corresponding entity by looking for the same `key` in the `const.py` file.
